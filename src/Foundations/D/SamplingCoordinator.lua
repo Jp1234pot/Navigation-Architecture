@@ -163,13 +163,22 @@ function SamplingCoordinator:_sampleModel(model, role)
         return nil, role .. "NotInWorkspace", nil
     end
 
-    local snapshot, observeStatus = self.PhysicsObserver:Observe(model)
+    local snapshot
+    local observeStatus
+
+    if role == "Target" then
+        snapshot, observeStatus = self.PhysicsObserver:ObservePosition(model)
+    else
+        snapshot, observeStatus = self.PhysicsObserver:Observe(model)
+    end
+
     if not snapshot then
         self.VelocityEstimator:Reset(model)
         return nil, observeStatus or "ObservationFailed", nil
     end
 
     local estimate, estimateStatus = self.VelocityEstimator:Update(snapshot)
+
     return snapshot, "OK", {
         estimate = estimate,
         estimateStatus = estimateStatus,
