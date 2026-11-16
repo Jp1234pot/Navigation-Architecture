@@ -35,12 +35,15 @@ local function copyProgress(progress)
     end
 
     local result = {}
+
     for key, value in pairs(progress) do
         if key == "waypoints" then
             local copied = {}
+
             for index, waypoint in ipairs(value) do
                 copied[index] = copyWaypoint(waypoint)
             end
+
             result.waypoints = copied
         else
             result[key] = value
@@ -135,7 +138,8 @@ function WaypointTracker:Update(position)
     self._lastPosition = position
 
     local advances = 0
-    local maximumAdvances = self.Config.maxWaypointAdvancesPerUpdate or 4
+    local maximumAdvances =
+        self.Config.maxWaypointAdvancesPerUpdate or 4
 
     while self._currentIndex <= #self._waypoints
         and advances < maximumAdvances do
@@ -143,13 +147,17 @@ function WaypointTracker:Update(position)
         local waypoint = self._waypoints[self._currentIndex]
         local difference = position - waypoint.position
 
-        local reachedDistance = self.Config.waypointReachedDistance or 2.75
+        local reachedDistance =
+            self.Config.waypointReachedDistance or 2.75
 
-        if waypoint.action == Enum.PathWaypointAction.Climb then
-            reachedDistance = self.Config.climbWaypointReachedDistance or 3.5
+        -- Climb is a PathWaypoint label, not a PathWaypointAction enum.
+        if waypoint.label == "Climb" then
+            reachedDistance =
+                self.Config.climbWaypointReachedDistance or 3.5
         end
 
-        local verticalLimit = self.Config.maxWaypointVerticalError or 5.0
+        local verticalLimit =
+            self.Config.maxWaypointVerticalError or 5.0
 
         if difference.Magnitude > reachedDistance
             or math.abs(difference.Y) > verticalLimit then
@@ -176,7 +184,7 @@ function WaypointTracker:GetProgress()
     local total = #self._waypoints
     local completed = math.min(self._currentIndex - 1, total)
 
-    return {
+    local progress = {
         requestId = self._requestId,
         status = self._status,
         reason = self._reason,
@@ -188,6 +196,8 @@ function WaypointTracker:GetProgress()
         lastPosition = self._lastPosition,
         waypoints = self._waypoints,
     }
+
+    return copyProgress(progress)
 end
 
 function WaypointTracker:Reset(reason)
