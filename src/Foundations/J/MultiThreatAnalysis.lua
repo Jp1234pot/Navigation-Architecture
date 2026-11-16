@@ -21,30 +21,68 @@ local function isFiniteVector3(value)
         and isFiniteNumber(value.Z)
 end
 
+local function isModel(value)
+    if typeof(value) ~= "Instance" then
+        return false
+    end
+
+    local success, result = pcall(function()
+        return value:IsA("Model")
+    end)
+
+    return success and result == true
+end
+
+local function hasMethods(value, methodNames)
+    if type(value) ~= "table" then
+        return false
+    end
+
+    local success, result = pcall(function()
+        for _, methodName in ipairs(methodNames) do
+            if type(value[methodName]) ~= "function" then
+                return false
+            end
+        end
+        return true
+    end)
+
+    return success and result == true
+end
+
 local function clamp(value, minimum, maximum)
     return math.max(minimum, math.min(maximum, value))
 end
 
-local function getFreshVelocity(estimate, snapshotTimestamp, maxAge)
+local function getFreshVelocity(estimate, model, snapshotTimestamp, maxAge)
     if type(estimate) ~= "table"
+        or estimate.model ~= model
         or not isFiniteVector3(estimate.velocity)
         or not isFiniteNumber(estimate.timestamp)
         or not isFiniteNumber(snapshotTimestamp) then
         return nil
     end
 
-    local age = math.abs(snapshotTimestamp - estimate.timestamp)
-    if age > maxAge then
+    local age = snapshotTimestamp - estimate.timestamp
+
+    if age < 0 or age > maxAge then
         return nil
     end
 
     return estimate.velocity
 end
 
-local function assessContact(localPosition, localVelocity, localTimestamp, candidate, snapshot, estimate, config)
+local function assessContact(
+    localPosition,
+    localVelocity,
+    localTimestamp,
+    candidate,
+    snapshot,
+    estimate,
+    config
+)
     if type(candidate) ~= "table"
-        or typeof(candidate.model) ~= "Instance"
-        or not candidate.model:IsA("Model")
+        or not isModel(candidate.model)
         or (candidate.kind ~= "Player" and candidate.kind ~= "NPC") then
         return nil, "InvalidCandidate"
     end
@@ -55,18 +93,29 @@ local function assessContact(localPosition, localVelocity, localTimestamp, candi
         or not isFiniteNumber(snapshot.timestamp) then
         return nil, "InvalidSnapshot"
     end
-    if math.abs(snapshot.timestamp - localTimestamp) > config.threatMaxEstimateAge then
+
+    local snapshotAge = snapshot.timestamp - localTimestamp
+    if snapshotAge < 0 or snapshotAge > config.threatMaxEstimateAge then
         return nil, "SnapshotSkewTooLarge"
     end
 
     local offset = snapshot.position - localPosition
     local distance = offset.Magnitude
+
     if not isFiniteNumber(distance) then
         return nil, "InvalidDistance"
     end
 
-    local candidateVelocity = getFreshVelocity(estimate, snapshot.timestamp, config.threatMaxEstimateAge)
-    local hasRelativeVelocity = localVelocity ~= nil and candidateVelocity ~= nil
+    local candidateVelocity = getFreshVelocity(
+        estimate,
+        candidate.model,
+        snapshot.timestamp,
+        config.threatMaxEstimateAge
+    )
+
+    local hasRelativeVelocity =
+        localVelocity ~= nil and candidateVelocity ~= nil
+
     local closingSpeed = nil
     local timeToClosestApproach = nil
     local predictedClosestDistance = nil
@@ -74,16 +123,24 @@ local function assessContact(localPosition, localVelocity, localTimestamp, candi
     if hasRelativeVelocity then
         local relativeVelocity = candidateVelocity - localVelocity
         local relativeSpeedSquared = relativeVelocity:Dot(relativeVelocity)
+
         if isFiniteNumber(relativeSpeedSquared) and relativeSpeedSquared > 0.0001 then
-            local closingRate = -offset:Dot(relativeVelocity) / math.max(distance, 0.001)
+            local closingRate = -offset:Dot(relativeVelocity)
+                / math.max(distance, 0.001)
+
             if isFiniteNumber(closingRate) then
                 closingSpeed = closingRate
             end
 
             local time = -offset:Dot(relativeVelocity) / relativeSpeedSquared
-            if isFiniteNumber(time) and time > 0 and time <= config.threatPredictionHorizon then
+
+            if isFiniteNumber(time)
+                and time > 0
+                and time <= config.threatPredictionHorizon then
+
                 local closestOffset = offset + relativeVelocity * time
                 local closestDistance = closestOffset.Magnitude
+
                 if isFiniteNumber(closestDistance) then
                     timeToClosestApproach = time
                     predictedClosestDistance = closestDistance
@@ -94,10 +151,13 @@ local function assessContact(localPosition, localVelocity, localTimestamp, candi
         end
     end
 
-    local proximityScore = clamp(1 - (distance / config.threatNearDistance), 0, 1) * 60
+    local proximityScore =
+        clamp(1 - (distance / config.threatNearDistance), 0, 1) * 60
+
     local approachScore = 0
     if closingSpeed and closingSpeed > 0 then
-        approachScore = clamp(closingSpeed / config.threatMaxApproachSpeed, 0, 1) * 25
+        approachScore =
+            clamp(closingSpeed / config.threatMaxApproachSpeed, 0, 1) * 25
     end
 
     local trajectoryScore = 0
@@ -109,8 +169,12 @@ local function assessContact(localPosition, localVelocity, localTimestamp, candi
         ) * 15
     end
 
-    local score = math.floor(clamp(proximityScore + approachScore + trajectoryScore, 0, 100) + 0.5)
+    local score = math.floor(
+        clamp(proximityScore + approachScore + trajectoryScore, 0, 100) + 0.5
+    )
+
     local assessment
+
     if distance <= config.threatCriticalDistance then
         assessment = "CriticalProximity"
     elseif predictedClosestDistance ~= nil
@@ -144,93 +208,243 @@ local function assessContact(localPosition, localVelocity, localTimestamp, candi
 end
 
 function MultiThreatAnalysis.new(dependencies)
-    assert(type(dependencies) == "table", "MultiThreatAnalysis requires dependencies")
+    assert(type(dependencies) == "table",
+        "MultiThreatAnalysis requires dependencies")
 
     local config = dependencies.config
     local targetDiscovery = dependencies.targetDiscovery
     local physicsObserver = dependencies.physicsObserver
     local velocityEstimator = dependencies.velocityEstimator
+    local recoveryAnalysis = dependencies.recoveryAnalysis
 
-    assert(type(config) == "table", "MultiThreatAnalysis requires validated config")
-    assert(targetDiscovery ~= nil, "MultiThreatAnalysis requires TargetDiscovery")
-    assert(physicsObserver ~= nil, "MultiThreatAnalysis requires PhysicsObserver")
-    assert(velocityEstimator ~= nil, "MultiThreatAnalysis requires a dedicated VelocityEstimator")
-    assert(type(config.maxThreatCandidates) == "number"
+    assert(type(config) == "table",
+        "MultiThreatAnalysis requires validated config")
+
+    assert(hasMethods(targetDiscovery, {
+        "GetCandidates",
+        "IsCandidateCurrent",
+    }), "MultiThreatAnalysis requires a compatible TargetDiscovery")
+
+    assert(hasMethods(physicsObserver, {
+        "ObservePosition",
+    }), "MultiThreatAnalysis requires a compatible PhysicsObserver")
+
+    assert(hasMethods(velocityEstimator, {
+        "Update",
+        "GetEstimate",
+        "Reset",
+    }), "MultiThreatAnalysis requires a compatible VelocityEstimator")
+
+    assert(recoveryAnalysis == nil or hasMethods(recoveryAnalysis, {
+        "Record",
+    }), "recoveryAnalysis must be nil or provide Record")
+
+    assert(isFiniteNumber(config.maxThreatCandidates)
         and config.maxThreatCandidates % 1 == 0
         and config.maxThreatCandidates >= 1
         and config.maxThreatCandidates <= 64,
         "maxThreatCandidates must be an integer from 1 to 64")
-    assert(type(config.maxThreatResults) == "number"
+
+    assert(isFiniteNumber(config.maxThreatResults)
         and config.maxThreatResults % 1 == 0
         and config.maxThreatResults >= 1
         and config.maxThreatResults <= config.maxThreatCandidates,
         "maxThreatResults must be an integer from 1 to maxThreatCandidates")
+
+    assert(isFiniteNumber(config.threatAnalysisMinInterval)
+        and config.threatAnalysisMinInterval > 0,
+        "threatAnalysisMinInterval must be finite and positive")
+
+    assert(isFiniteNumber(config.threatMaxEstimateAge)
+        and config.threatMaxEstimateAge > 0,
+        "threatMaxEstimateAge must be finite and positive")
+
+    assert(isFiniteNumber(config.threatPredictionHorizon)
+        and config.threatPredictionHorizon > 0,
+        "threatPredictionHorizon must be finite and positive")
+
+    assert(isFiniteNumber(config.threatNearDistance)
+        and config.threatNearDistance > 0,
+        "threatNearDistance must be finite and positive")
+
+    assert(isFiniteNumber(config.threatCriticalDistance)
+        and config.threatCriticalDistance >= 0
+        and config.threatCriticalDistance < config.threatNearDistance,
+        "threatCriticalDistance must be non-negative and less than threatNearDistance")
+
+    assert(isFiniteNumber(config.threatMaxApproachSpeed)
+        and config.threatMaxApproachSpeed > 0,
+        "threatMaxApproachSpeed must be finite and positive")
 
     return setmetatable({
         Config = config,
         TargetDiscovery = targetDiscovery,
         PhysicsObserver = physicsObserver,
         VelocityEstimator = velocityEstimator,
-        RecoveryAnalysis = dependencies.recoveryAnalysis,
+        RecoveryAnalysis = recoveryAnalysis,
+
         _nextStartIndex = {
             Player = 1,
             NPC = 1,
         },
+
         _lastAnalysisAt = nil,
         _destroyed = false,
     }, MultiThreatAnalysis)
 end
 
+function MultiThreatAnalysis:_record(reason, value)
+    local recoveryAnalysis = self.RecoveryAnalysis
+
+    if not recoveryAnalysis then
+        return false
+    end
+
+    local success, recorded = pcall(function()
+        return recoveryAnalysis:Record("ThreatAnalysis", reason, value)
+    end)
+
+    return success and recorded == true
+end
+
+function MultiThreatAnalysis:_resetEstimate(model)
+    if not isModel(model) then
+        return false
+    end
+
+    local success, result = pcall(function()
+        return self.VelocityEstimator:Reset(model)
+    end)
+
+    return success and result == true
+end
+
+function MultiThreatAnalysis:_observeCandidate(candidate, mode)
+    local currentOk, isCurrent = pcall(function()
+        return self.TargetDiscovery:IsCandidateCurrent(candidate, mode)
+    end)
+
+    if not currentOk or isCurrent ~= true then
+        return nil, "CandidateUnavailable"
+    end
+
+    local snapshotOk, snapshot = pcall(function()
+        return self.PhysicsObserver:ObservePosition(candidate.model)
+    end)
+
+    if not snapshotOk or type(snapshot) ~= "table" then
+        return nil, "ObservationFailed"
+    end
+
+    local estimateOk, estimate = pcall(function()
+        return self.VelocityEstimator:Update(snapshot)
+    end)
+
+    if not estimateOk then
+        estimate = nil
+    end
+
+    if not estimate then
+        local getOk, previousEstimate = pcall(function()
+            return self.VelocityEstimator:GetEstimate(candidate.model)
+        end)
+
+        if getOk then
+            estimate = previousEstimate
+        end
+    end
+
+    return {
+        snapshot = snapshot,
+        estimate = estimate,
+    }, "OK"
+end
+
 -- Analyze performs one bounded batch. It does not create a connection, timer,
--- task, or repeating loop. Candidate scanning rotates between batches so a
--- capped scan does not permanently favor the first entries in the source list.
+-- task, or repeating loop. Candidate scanning rotates between batches.
 function MultiThreatAnalysis:Analyze(localRecord)
     if self._destroyed then
         return nil, "Destroyed"
     end
-    if not self.Config.multiThreatAnalysisEnabled then
+
+    if self.Config.multiThreatAnalysisEnabled ~= true then
         return nil, "Disabled"
     end
 
-    local localSnapshot = type(localRecord) == "table" and localRecord.snapshot or nil
+    local localSnapshot =
+        type(localRecord) == "table" and localRecord.snapshot or nil
+
     if type(localSnapshot) ~= "table"
+        or not isModel(localSnapshot.model)
         or not isFiniteVector3(localSnapshot.position)
         or not isFiniteNumber(localSnapshot.timestamp) then
         return nil, "LocalSnapshotUnavailable"
     end
 
     local now = os.clock()
+
     if self._lastAnalysisAt
         and now - self._lastAnalysisAt < self.Config.threatAnalysisMinInterval then
         return nil, "RateLimited"
     end
+
     self._lastAnalysisAt = now
 
     local localVelocity = getFreshVelocity(
         type(localRecord) == "table" and localRecord.estimate or nil,
+        localSnapshot.model,
         localSnapshot.timestamp,
         self.Config.threatMaxEstimateAge
     )
 
     local mode = self.Config.targetMode
-    local startIndex = self._nextStartIndex[mode] or 1
-    local candidates, discoveryStatus, inspectedCount, sourceCount, rotationWindowCount =
-        self.TargetDiscovery:GetCandidates(
-            mode,
-            localSnapshot.position,
-            self.Config.maxThreatCandidates,
-            startIndex
-        )
 
-    if discoveryStatus ~= "OK" then
-        return nil, discoveryStatus
+    if mode ~= "Player" and mode ~= "NPC" then
+        return nil, "InvalidTargetMode"
+    end
+
+    local startIndex = self._nextStartIndex[mode] or 1
+
+    local discoveryOk, candidates, discoveryStatus, inspectedCount,
+        sourceCount, rotationWindowCount = pcall(function()
+            return self.TargetDiscovery:GetCandidates(
+                mode,
+                localSnapshot.position,
+                self.Config.maxThreatCandidates,
+                startIndex
+            )
+        end)
+
+    if not discoveryOk then
+        self:_record("DiscoveryFailed", 0)
+        return nil, "DiscoveryFailed"
+    end
+
+    if discoveryStatus ~= "OK" or type(candidates) ~= "table" then
+        return nil, discoveryStatus or "InvalidDiscoveryResult"
     end
 
     inspectedCount = inspectedCount or #candidates
     sourceCount = sourceCount or inspectedCount
     rotationWindowCount = rotationWindowCount or sourceCount
+
+    if not isFiniteNumber(inspectedCount)
+        or not isFiniteNumber(sourceCount)
+        or not isFiniteNumber(rotationWindowCount)
+        or inspectedCount < 0
+        or sourceCount < 0
+        or rotationWindowCount < 0 then
+        return nil, "InvalidDiscoveryCounts"
+    end
+
+    inspectedCount = math.floor(inspectedCount)
+    sourceCount = math.floor(sourceCount)
+    rotationWindowCount = math.floor(rotationWindowCount)
+
     if rotationWindowCount > 0 then
-        self._nextStartIndex[mode] = ((startIndex - 1 + math.max(inspectedCount, 1)) % rotationWindowCount) + 1
+        self._nextStartIndex[mode] =
+            ((startIndex - 1 + math.max(inspectedCount, 1))
+                % rotationWindowCount) + 1
     else
         self._nextStartIndex[mode] = 1
     end
@@ -239,93 +453,101 @@ function MultiThreatAnalysis:Analyze(localRecord)
     local rejectedCount = 0
     local nearestDistance = nil
 
-    -- candidates is already capped by TargetDiscovery; this loop cannot exceed 64.
-    for index = 1, math.min(#candidates, self.Config.maxThreatCandidates) do
+    local candidateCount = math.min(
+        #candidates,
+        self.Config.maxThreatCandidates
+    )
+
+    for index = 1, candidateCount do
         local candidate = candidates[index]
-        local currentOk, isCurrent = pcall(function()
-            return self.TargetDiscovery:IsCandidateCurrent(candidate, mode)
-        end)
 
-        if currentOk and isCurrent then
-            local snapshot = self.PhysicsObserver:ObservePosition(candidate.model)
-            if snapshot then
-                local estimate = self.VelocityEstimator:Update(snapshot)
-                if not estimate then
-                    estimate = self.VelocityEstimator:GetEstimate(candidate.model)
-                end
+        local observation = nil
 
-                local result = assessContact(
-                    localSnapshot.position,
-                    localVelocity,
-                    localSnapshot.timestamp,
-                    candidate,
-                    snapshot,
-                    estimate,
-                    self.Config
-                )
+        if type(candidate) == "table" and isModel(candidate.model) then
+            local observationResult = self:_observeCandidate(candidate, mode)
+            observation = observationResult
+        end
 
-                if result then
-                    result.velocityAvailable = result.velocityAvailable == true
-                    result._inputOrder = index
-                    results[#results + 1] = result
-                    nearestDistance = nearestDistance and math.min(nearestDistance, result.distance)
-                        or result.distance
-                else
-                    rejectedCount += 1
-                    self.VelocityEstimator:Reset(candidate.model)
-                end
+        if observation then
+            local result = assessContact(
+                localSnapshot.position,
+                localVelocity,
+                localSnapshot.timestamp,
+                candidate,
+                observation.snapshot,
+                observation.estimate,
+                self.Config
+            )
+
+            if result then
+                results[#results + 1] = result
+
+                nearestDistance = nearestDistance
+                    and math.min(nearestDistance, result.distance)
+                    or result.distance
             else
                 rejectedCount += 1
-                self.VelocityEstimator:Reset(candidate.model)
+                self:_resetEstimate(candidate.model)
             end
         else
             rejectedCount += 1
-            if candidate and candidate.model then
-                self.VelocityEstimator:Reset(candidate.model)
+
+            if type(candidate) == "table" then
+                self:_resetEstimate(candidate.model)
             end
         end
     end
 
     table.sort(results, function(left, right)
         if left.score == right.score then
-            if left.distance == right.distance then
-                return left._inputOrder < right._inputOrder
-            end
             return left.distance < right.distance
         end
+
         return left.score > right.score
     end)
 
     local analyzedCount = #results
-    local returnedCount = math.min(analyzedCount, self.Config.maxThreatResults)
+    local returnedCount = math.min(
+        analyzedCount,
+        self.Config.maxThreatResults
+    )
+
     for index = analyzedCount, returnedCount + 1, -1 do
         results[index] = nil
-    end
-    for index = 1, returnedCount do
-        results[index]._inputOrder = nil
     end
 
     local packet = {
         timestamp = os.clock(),
         targetMode = mode,
+
         inspectedSourceEntries = inspectedCount,
         sourceEntriesAvailable = sourceCount,
         discoveryWindowEntries = rotationWindowCount,
-        uninspectedSourceEntries = math.max(sourceCount - inspectedCount, 0),
-        uninspectedWithinDiscoveryWindow = math.max(rotationWindowCount - inspectedCount, 0),
+
+        uninspectedSourceEntries =
+            math.max(sourceCount - inspectedCount, 0),
+
+        uninspectedWithinDiscoveryWindow =
+            math.max(rotationWindowCount - inspectedCount, 0),
+
         analyzedCount = analyzedCount,
         rejectedCount = rejectedCount,
         returnedCount = returnedCount,
         nearestDistance = nearestDistance,
-        highestAssessment = results[1] and results[1].assessment or "None",
+
+        highestAssessment =
+            results[1] and results[1].assessment or "None",
+
         results = results,
-        velocityNote = "Velocity uses fresh position-derived estimates; raw AssemblyLinearVelocity is not used for remote candidates.",
-        authorityNote = "Client-side observation only; not authoritative game state.",
+
+        velocityNote =
+            "Velocity uses fresh position-derived estimates; raw AssemblyLinearVelocity is not used for remote candidates.",
+
+        authorityNote =
+            "Client-side observation only; not authoritative game state.",
     }
 
-    if self.RecoveryAnalysis then
-        self.RecoveryAnalysis:Record("ThreatAnalysis", "BatchCompleted", analyzedCount)
-    end
+    self:_record("BatchCompleted", analyzedCount)
 
     return packet, "OK"
 end
@@ -334,9 +556,11 @@ function MultiThreatAnalysis:Destroy()
     if self._destroyed then
         return
     end
+
     self._nextStartIndex.Player = 1
     self._nextStartIndex.NPC = 1
     self._lastAnalysisAt = nil
+    self.RecoveryAnalysis = nil
     self._destroyed = true
 end
 
