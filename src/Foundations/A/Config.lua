@@ -99,7 +99,12 @@ local DEFAULTS = {
 
     maxSessionRecords = 250,
 }
+local KNOWN_KEYS = {}
 
+for key in pairs(DEFAULTS) do
+    KNOWN_KEYS[key] = true
+end
+KNOWN_KEYS.npcTargetAttribute = true
 local VALIDATORS = {
     enabled = function(value) return type(value) == "boolean" end,
     targetMode = function(value) return value == "Player" or value == "NPC" end,
@@ -207,7 +212,7 @@ function Config.Create(overrides)
         for key, value in pairs(overrides) do
             overrideCount += 1
             assert(overrideCount <= 64, "Config overrides may contain at most 64 entries")
-            assert(DEFAULTS[key] ~= nil, string.format("Unknown navigation config key: %s", tostring(key)))
+            assert(KNOWN_KEYS[key], string.format("Unknown navigation config key: %s", tostring(key)))
             if key == "pathCosts" then
                 assert(type(value) == "table", "config.pathCosts must be a table")
                 local copiedCosts = {}
