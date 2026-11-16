@@ -105,12 +105,14 @@ function FactionValidator:Classify(localPlayer, candidate)
 			return "OpposingFaction", localSource, candidateSource
 		end
 
-		if localPlayer.Team ~= nil and candidate.Team ~= nil then
-			if localPlayer.Team == candidate.Team then
-				return "SameFaction", "Team", "Team"
+		if localPlayer.TeamColor ~= nil
+			and candidate.TeamColor ~= nil then
+
+			if localPlayer.TeamColor == candidate.TeamColor then
+				return "SameFaction", "TeamColor", "TeamColor"
 			end
 
-			return "OpposingFaction", "Team", "Team"
+			return "OpposingFaction", "TeamColor", "TeamColor"
 		end
 
 		return "Unclassified", localSource, candidateSource
