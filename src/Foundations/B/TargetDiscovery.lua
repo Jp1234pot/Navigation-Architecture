@@ -1,6 +1,7 @@
 
 -- Navigation Architecture v2.2
 -- Module: TargetDiscovery
+-- Based on recovered original source.
 -- Read-only target enumeration. Does not move, highlight, modify, or control targets.
 
 local Players = game:GetService("Players")
@@ -77,6 +78,34 @@ function TargetDiscovery:_getNPCFolder()
     return nil
 end
 
+function TargetDiscovery:_isValidNPC(model)
+    if not model or not model:IsA("Model") then
+        return false
+    end
+
+    local npcFolder = self:_getNPCFolder()
+    if not npcFolder or model.Parent ~= npcFolder then
+        return false
+    end
+
+    -- Never classify a connected player's character as an NPC.
+    if Players:GetPlayerFromCharacter(model) ~= nil then
+        return false
+    end
+
+    if self.Config.npcTargetAttribute then
+        local success, isTargetable = pcall(function()
+            return model:GetAttribute(self.Config.npcTargetAttribute)
+        end)
+
+        if not success or isTargetable ~= true then
+            return false
+        end
+    end
+
+    return true
+end
+
 function TargetDiscovery:_buildCandidate(model, player, kind, originPosition)
     if not isAliveAndPresent(model) then
         return nil
@@ -86,28 +115,22 @@ function TargetDiscovery:_buildCandidate(model, player, kind, originPosition)
         return nil
     end
 
-    if kind == "NPC" and player ~= nil then
-        -- NPC mode must never accidentally include a player character.
-        return nil
-    end
-
-    if kind == "NPC" and self.Config.npcTargetAttribute then
-        local success, isTargetable = pcall(function()
-            return model:GetAttribute(self.Config.npcTargetAttribute)
-        end)
-        if not success or isTargetable ~= true then
+    if kind == "NPC" then
+        if player ~= nil or not self:_isValidNPC(model) then
             return nil
         end
     end
 
     local eligible, classification, localSource, candidateSource =
         self.FactionValidator:IsEligible(self.LocalPlayer, player or model, kind)
+
     if not eligible then
         return nil
     end
 
     local humanoid = getHumanoid(model)
     local root = getRoot(model)
+
     if not humanoid or not root then
         return nil
     end
@@ -132,6 +155,7 @@ end
 
 function TargetDiscovery:GetCandidates(targetMode, originPosition, maxCandidates, startIndex)
     local mode = targetMode or self.Config.targetMode
+
     if not self.Config.enabled then
         return {}, "Disabled"
     end
@@ -146,6 +170,7 @@ function TargetDiscovery:GetCandidates(targetMode, originPosition, maxCandidates
             return {}, "InvalidCandidateLimit", 0, 0
         end
     end
+
     if startIndex ~= nil then
         if type(startIndex) ~= "number" or startIndex ~= startIndex
             or startIndex == math.huge or startIndex == -math.huge
@@ -157,42 +182,63 @@ function TargetDiscovery:GetCandidates(targetMode, originPosition, maxCandidates
     local candidates = {}
 
     if mode == "Player" then
-        -- Player mode enumerates only Players:GetPlayers(), never Workspace descendants.
+        -- Player mode enumerates only Players:GetPlayers().
         local players = Players:GetPlayers()
         local sourceCount = #players
         local inspectCount = math.min(sourceCount, maxCandidates or sourceCount)
         local start = sourceCount > 0 and (((startIndex or 1) - 1) % sourceCount) + 1 or 1
+
         for offset = 0, inspectCount - 1 do
             local playerIndex = ((start + offset - 1) % sourceCount) + 1
             local targetPlayer = players[playerIndex]
+
             if targetPlayer and targetPlayer ~= self.LocalPlayer then
                 local character = targetPlayer.Character
-                local candidate = self:_buildCandidate(character, targetPlayer, "Player", originPosition)
+                local candidate = self:_buildCandidate(
+                    character,
+                    targetPlayer,
+                    "Player",
+                    originPosition
+                )
+
                 if candidate then
                     table.insert(candidates, candidate)
                 end
             end
         end
+
         return candidates, "OK", inspectCount, sourceCount, sourceCount
     end
 
-    -- NPC mode is restricted to direct Model children of Workspace.NPCs.
-    -- No fallback to Workspace:GetDescendants() is performed.
+    -- NPC mode only examines direct Model children of Workspace.NPCs.
+    -- No full-Workspace descendant scan fallback exists.
     local npcFolder = self:_getNPCFolder()
+
     if not npcFolder then
         return {}, "NPCFolderUnavailable"
     end
 
     local children = npcFolder:GetChildren()
     local totalChildCount = #children
-    local sourceCount = math.min(totalChildCount, self.Config.maxNpcCandidatesToInspect)
+    local sourceCount = math.min(
+        totalChildCount,
+        self.Config.maxNpcCandidatesToInspect
+    )
     local inspectCount = math.min(sourceCount, maxCandidates or sourceCount)
     local start = sourceCount > 0 and (((startIndex or 1) - 1) % sourceCount) + 1 or 1
+
     for offset = 0, inspectCount - 1 do
         local childIndex = ((start + offset - 1) % sourceCount) + 1
         local instance = children[childIndex]
+
         if instance and instance:IsA("Model") then
-            local candidate = self:_buildCandidate(instance, nil, "NPC", originPosition)
+            local candidate = self:_buildCandidate(
+                instance,
+                nil,
+                "NPC",
+                originPosition
+            )
+
             if candidate then
                 table.insert(candidates, candidate)
             end
@@ -213,6 +259,7 @@ function TargetDiscovery:FindNearest(targetMode, originPosition)
 
     for _, candidate in ipairs(candidates) do
         local distance = candidate.distance
+
         if distance and distance < shortestDistance then
             shortestDistance = distance
             nearest = candidate
@@ -228,17 +275,37 @@ function TargetDiscovery:IsCandidateCurrent(candidate, targetMode)
     end
 
     local mode = targetMode or self.Config.targetMode
+
     if not self.Config.enabled then
         return false, "Disabled"
     end
+
     if mode ~= candidate.kind then
         return false, "TargetModeChanged"
     end
+
     if not isAliveAndPresent(candidate.model) then
         return false, "TargetUnavailable"
     end
-    if candidate.player and candidate.player.Character ~= candidate.model then
-        return false, "CharacterChanged"
+
+    if candidate.kind == "Player" then
+        if not candidate.player
+            or not candidate.player:IsA("Player")
+            or candidate.player.Parent ~= Players then
+            return false, "PlayerUnavailable"
+        end
+
+        if candidate.player.Character ~= candidate.model then
+            return false, "CharacterChanged"
+        end
+
+    elseif candidate.kind == "NPC" then
+        if candidate.player ~= nil or not self:_isValidNPC(candidate.model) then
+            return false, "NPCNoLongerEligible"
+        end
+
+    else
+        return false, "InvalidCandidateKind"
     end
 
     local eligible = self.FactionValidator:IsEligible(
@@ -246,6 +313,7 @@ function TargetDiscovery:IsCandidateCurrent(candidate, targetMode)
         candidate.player or candidate.model,
         candidate.kind
     )
+
     if not eligible then
         return false, "FactionNoLongerEligible"
     end
