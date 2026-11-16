@@ -80,6 +80,19 @@ local DEFAULTS = {
     threatMaxEstimateAge = 0.75,
     threatMaxApproachSpeed = 24.0,
 
+    -- Foundation K: bounded evidence and explanation records.
+    evidenceLedgerEnabled = false,
+    maxEvidenceRecords = 128,
+    evidenceMaxAge = 30.0,
+    evidenceHalfLife = 10.0,
+    evidenceMinSamples = 3,
+
+    uncertaintyCellSize = 32.0,
+    maxUncertaintyCells = 128,
+    uncertaintyMaxAge = 30.0,
+
+    maxDecisionRecords = 100,
+
     maxTrackedWaypoints = 512,
     maxWaypointAdvancesPerUpdate = 4,
     maxNpcCandidatesToInspect = 256,
@@ -100,6 +113,7 @@ local VALIDATORS = {
     movementEnabled = function(value) return type(value) == "boolean" end,
     adaptiveRepathEnabled = function(value) return type(value) == "boolean" end,
     multiThreatAnalysisEnabled = function(value) return type(value) == "boolean" end,
+    evidenceLedgerEnabled = function(value) return type(value) == "boolean" end,
     pathCosts = function(value) return type(value) == "table" end,
     npcFolderName = function(value) return value == nil or type(value) == "string" end,
     factionAttribute = function(value) return type(value) == "string" and value ~= "" end,
@@ -151,6 +165,12 @@ local POSITIVE_NUMBERS = {
     threatCriticalDistance = true,
     threatMaxEstimateAge = true,
     threatMaxApproachSpeed = true,
+
+    -- Foundation K positive numeric settings.
+    evidenceMaxAge = true,
+    evidenceHalfLife = true,
+    uncertaintyCellSize = true,
+    uncertaintyMaxAge = true,
 }
 
 local NON_NEGATIVE_NUMBERS = {
@@ -267,6 +287,30 @@ function Config.Create(overrides)
         "config.threatMaxEstimateAge must be <= 2 seconds")
     assert(result.threatMaxApproachSpeed <= 250,
         "config.threatMaxApproachSpeed must be <= 250 studs/second")
+
+    -- Foundation K capacity and sample bounds.
+    assert(result.maxEvidenceRecords % 1 == 0
+        and result.maxEvidenceRecords >= 1
+        and result.maxEvidenceRecords <= 512,
+        "config.maxEvidenceRecords must be an integer from 1 to 512")
+
+    assert(result.evidenceMinSamples % 1 == 0
+        and result.evidenceMinSamples >= 1
+        and result.evidenceMinSamples <= 16,
+        "config.evidenceMinSamples must be an integer from 1 to 16")
+
+    assert(result.uncertaintyCellSize >= 4,
+        "config.uncertaintyCellSize must be at least 4")
+
+    assert(result.maxUncertaintyCells % 1 == 0
+        and result.maxUncertaintyCells >= 1
+        and result.maxUncertaintyCells <= 256,
+        "config.maxUncertaintyCells must be an integer from 1 to 256")
+
+    assert(result.maxDecisionRecords % 1 == 0
+        and result.maxDecisionRecords >= 1
+        and result.maxDecisionRecords <= 256,
+        "config.maxDecisionRecords must be an integer from 1 to 256")
 
     assert(result.agentRadius % 1 == 0 and result.agentHeight % 1 == 0,
         "config.agentRadius and config.agentHeight must be whole numbers")
