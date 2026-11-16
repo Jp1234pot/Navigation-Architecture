@@ -32,22 +32,35 @@ function LifecycleManager:Connect(signal, callback, key)
 	assert(signal ~= nil, "Connect requires a signal")
 	assert(type(callback) == "function", "Connect requires a callback")
 
+	local previousConnection = nil
+
 	if key ~= nil then
 		assert(type(key) == "string", "Connection key must be a string")
 		assert(key ~= "", "Connection key cannot be empty")
 
-		self:Disconnect(key)
+		previousConnection = self._connectionKeys[key]
 	end
 
-	if self._connectionCount >= MAX_CONNECTIONS then
+	if self._connectionCount >= MAX_CONNECTIONS and not previousConnection then
 		warn("[LifecycleManager] Connection limit reached")
 		return nil
 	end
 
-	local connection = signal:Connect(callback)
+	local success, connection = pcall(function()
+		return signal:Connect(callback)
+	end)
+
+	if not success then
+		warn("[LifecycleManager] Connect failed: " .. tostring(connection))
+		return nil
+	end
 
 	if not connection then
 		return nil
+	end
+
+	if previousConnection then
+		self:Disconnect(previousConnection)
 	end
 
 	self._connections[connection] = true
