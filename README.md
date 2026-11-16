@@ -1,96 +1,97 @@
-# Navigation-Architecture
+Navigation Architecture
+
+Unified Architecture. Independent Subsystems. Isolated Failure.
+
+Project: Navigation Architecture
+Version: 2.2
+Status: Architectural development and integration planning
+
+---
+
+Overview
+
+Navigation Architecture is a modular client-side navigation and analysis architecture designed to bring multiple independent foundations into one coordinated structure.
+
+Its intended capabilities include:
+
+- Player and NPC discovery and selection.
+- Physical observation and telemetry.
+- Spatial and environmental analysis.
+- Path computation and waypoint tracking.
+- Route evaluation and recovery analysis.
+- Multi-contact and uncertainty analysis.
+- Interactive navigation controls.
+- Controlled local movement.
+- Pursue and Escape behavior coordination.
+
+The architecture is intended to operate through a shared Navigation Core while preserving the independence of its subsystems.
+
+Architectural Direction
+
+The project follows three central principles:
+
+1. Unified Coordination
+
+A shared Core will coordinate module registration, dependencies, lifecycle, communication, health, and error reporting.
+
+2. Independent Subsystems
+
+Each subsystem should retain a defined responsibility and communicate through documented interfaces.
+
+3. Isolated Failure
+
+An error in one subsystem should not automatically disable unrelated capabilities. Required dependencies, degraded states, and safe-stop behavior must be explicitly defined.
+
+Current Architecture Groups
+
+Group| Responsibility
+A-K| Core foundations and supporting subsystems
+L1-L5| Arena geometry, reachability, confidence, route analysis, and movement feasibility
+Navigation Core| Shared coordination layer, planned
+Interface| Interactive controls and status presentation, planned
+Behavior| Pursue/Escape and behavior coordination, planned
+
+Development Status
+
+The existing foundations and arena-analysis components have documentation describing their known contracts.
+
+The shared Core, complete integration, interactive control layer, and broader behavior coordination remain development objectives.
+
+Source review, static verification, runtime testing, and integration testing must be tracked separately.
+
+See "Project Status" (docs/PROJECT_STATUS.md) for the current verification record.
+
+Documentation
+
+Technical documentation is maintained in ""docs/"" (docs/README.md).
+
+Key documents:
+
+- "Architecture Overview" (docs/ARCHITECTURE_OVERVIEW.md)
+- "Foundation Catalog" (docs/FOUNDATION_CATALOG.md)
+- "Arena Analysis L1-L5" (docs/ARENA_ANALYSIS_L1_L5.md)
+- "Interfaces and Dependencies" (docs/INTERFACES_AND_DEPENDENCIES.md)
+- "Testing and Verification" (docs/TESTING_AND_VERIFICATION.md)
+- "Development Roadmap" (docs/ROADMAP.md)
+- "Architecture Decision Log" (docs/DECISION_LOG.md)
+
+Development Principles
+
+- Preserve existing module contracts where practical.
+- Avoid unnecessary rewrites.
+- Validate dependencies before integration.
+- Keep observation, analysis, navigation, behavior, and movement responsibilities distinct.
+- Use explicit authorization for movement.
+- Report errors without creating cascading failures.
+- Never describe unverified capabilities as completed.
+
+Scope
+
+Development and testing should take place in authorized Roblox Studio projects and test environments.
+
+The architecture is intended for legitimate client-side development and does not include exploit executors, unauthorized inspection, or unauthorized modification of other people's experiences.
+
+---
+
 Navigation Architecture v2.2
-
-A modular, client-side Roblox navigation and analysis architecture.
-
-This repository documents the architecture, subsystem boundaries, public interfaces, development status, and future integration direction.
-
-Project Overview
-
-The project is organized around independent subsystems that contribute to one integrated navigation architecture.
-
-The documented source packages cover:
-
-- Foundations A-K
-- Arena Analysis L1-L5
-- NavigationController
-- ArenaAnalysisPipeline
-
-The project is intended to evolve toward a shared Navigation Core that coordinates these subsystems without unnecessarily coupling their internal implementations.
-
-Current Status
-
-The existing A-K and L1-L5 packages have been documented and source-reviewed.
-
-However:
-
-- Roblox Studio runtime verification is not complete.
-- Luau parser and type-check verification are not complete.
-- The shared Navigation Core contract is not finalized.
-- Interactive GUI controls and complete Pursue/Escape behavior remain planned work.
-
-See "PROJECT_STATUS.md" (docs/PROJECT_STATUS.md).
-
-Intended Architecture
-
-One integrated architecture. Independent subsystems. Isolated failures.
-
-The intended Core should provide shared contracts for:
-
-- Module registration
-- Dependency validation
-- Lifecycle coordination
-- Error reporting
-- Health monitoring
-- Communication between subsystems
-
-Subsystems should retain independent ownership of their internal logic.
-
-A failure in one subsystem should not automatically disable unrelated subsystems. Required dependency failures should affect only the features that depend on them.
-
-Intended Features
-
-The broader project direction includes:
-
-- PLAYER/NPC selection
-- ON/OFF controls
-- Navigation and route selection
-- ESCAPE/PURSUE behavior
-- Local movement execution
-- Manual-input cooperation
-- Diagnostics and error reporting
-- Independent subsystem operation
-
-Not all of these features are implemented yet.
-
-Scope and Boundaries
-
-- Client-side execution does not mean the entire architecture is read-only.
-- Observation modules should not modify the world state they observe.
-- Internal state, analysis results, and GUI state may be updated by their owning modules.
-- Foundation H provides explicitly authorized local movement, disabled by default and subject to its configuration gates.
-- Analysis results and local observations are not guarantees of actual server state or physical reachability.
-- Development should use an authorized Roblox Studio place or test copy.
-- Exploit executors, unauthorized inspection, and modifications to other people's assets or scripts are outside the project scope.
-- Server scripts, remotes, DataStores, and server-side game logic are outside the current documented scope.
-
-Documentation Index
-
-Document| Purpose
-PROJECT_STATUS.md| Current implementation and verification status
-ARCHITECTURE_OVERVIEW.md| Overall architecture and subsystem relationships
-FOUNDATION_CATALOG.md| Foundations A-K
-ARENA_ANALYSIS_L1_L5.md| Arena Analysis subsystem
-INTERFACES_AND_DEPENDENCIES.md| APIs, ownership, and dependencies
-TESTING_AND_VERIFICATION.md| Testing strategy and evidence
-ROADMAP.md| Development phases
-DECISION_LOG.md| Recorded architectural decisions
-
-Maintenance Rules
-
-1. Preserve existing public contracts unless a deliberate change is approved.
-2. Distinguish implemented features from proposed features.
-3. Record important architectural decisions.
-4. Update documentation when APIs or dependencies change.
-5. Never describe source review as runtime verification.
-6. Keep subsystem ownership and failure boundaries explicit.
+A coordinated architecture built from independently responsible subsystems.
