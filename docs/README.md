@@ -4,15 +4,29 @@ This directory contains the technical documentation for Navigation Architecture 
 
 Project Documentation
 
-Document| Purpose
-"Project Status" (PROJECT_STATUS.md)| Current development and verification status
-"Architecture Overview" (ARCHITECTURE_OVERVIEW.md)| Overall architecture and subsystem relationships
-"Foundation Catalog" (FOUNDATION_CATALOG.md)| Foundations A-K and their responsibilities
-"Arena Analysis L1-L5" (ARENA_ANALYSIS_L1_L5.md)| Arena-analysis subsystem documentation
-"Interfaces and Dependencies" (INTERFACES_AND_DEPENDENCIES.md)| Known APIs, dependency contracts, and proposed Core services
-"Testing and Verification" (TESTING_AND_VERIFICATION.md)| Verification levels and testing strategy
-"Development Roadmap" (ROADMAP.md)| Planned development phases
-"Architecture Decision Log" (DECISION_LOG.md)| Recorded decisions and unresolved questions
+- "Project Status" (PROJECT_STATUS.md)
+  Current development and verification status.
+
+- "Architecture Overview" (ARCHITECTURE_OVERVIEW.md)
+  Overall architecture and subsystem relationships.
+
+- "Foundation Catalog" (FOUNDATION_CATALOG.md)
+  Foundations A-K and their responsibilities.
+
+- "Arena Analysis L1-L5" (ARENA_ANALYSIS_L1_L5.md)
+  Arena-analysis subsystem documentation.
+
+- "Interfaces and Dependencies" (INTERFACES_AND_DEPENDENCIES.md)
+  Known APIs, dependency contracts, and proposed Core services.
+
+- "Testing and Verification" (TESTING_AND_VERIFICATION.md)
+  Verification levels and testing strategy.
+
+- "Development Roadmap" (ROADMAP.md)
+  Planned development phases.
+
+- "Architecture Decision Log" (DECISION_LOG.md)
+  Recorded decisions and unresolved questions.
 
 Documentation Rules
 
