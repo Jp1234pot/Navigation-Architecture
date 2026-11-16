@@ -33,8 +33,10 @@ local function copyStringArray(source, maximumCount, maximumLength)
     if type(source) ~= "table" then
         return nil, false
     end
+
     local result = {}
     local count = 0
+
     for key, value in pairs(source) do
         count += 1
         if count > maximumCount
@@ -47,11 +49,13 @@ local function copyStringArray(source, maximumCount, maximumLength)
         end
         result[key] = value
     end
+
     for index = 1, count do
         if result[index] == nil then
             return nil, false
         end
     end
+
     return result, true
 end
 
@@ -60,6 +64,7 @@ function DecisionLedger.new(config)
     local capacity = config.maxDecisionRecords
     assert(isFiniteNumber(capacity) and capacity % 1 == 0 and capacity >= 1 and capacity <= 256,
         "maxDecisionRecords must be an integer from 1 to 256")
+
     return setmetatable({
         Config = config,
         _capacity = capacity,
@@ -82,7 +87,8 @@ function DecisionLedger:Record(packet)
     if type(packet) ~= "table" then
         return false, "InvalidPacket"
     end
-    if not ALLOWED_TYPES[packet.decisionType] then
+    if type(packet.decisionType) ~= "string"
+        or not ALLOWED_TYPES[packet.decisionType] then
         return false, "UnsupportedDecisionType"
     end
     if not validText(packet.chosenOption, 64) or not validText(packet.reason, 128) then
@@ -100,11 +106,17 @@ function DecisionLedger:Record(packet)
         or confidenceScore < 0 or confidenceScore > 100) then
         return false, "InvalidConfidenceScore"
     end
+
     local uncertainty = packet.uncertainty
-    if uncertainty ~= nil and (not isFiniteNumber(uncertainty) or uncertainty < 0 or uncertainty > 1) then
+    if uncertainty ~= nil and (not isFiniteNumber(uncertainty)
+        or uncertainty < 0 or uncertainty > 1) then
         return false, "InvalidUncertainty"
     end
-    local timestamp = packet.timestamp or os.clock()
+
+    local timestamp = packet.timestamp
+    if timestamp == nil then
+        timestamp = os.clock()
+    end
     if not isFiniteNumber(timestamp) or timestamp > os.clock() + 1 then
         return false, "InvalidTimestamp"
     end
@@ -119,8 +131,10 @@ function DecisionLedger:Record(packet)
         uncertainty = uncertainty,
         timestamp = timestamp,
     }
+
     self._nextIndex = (self._nextIndex % self._capacity) + 1
     self._count = math.min(self._count + 1, self._capacity)
+
     return true, "Recorded"
 end
 
@@ -128,17 +142,26 @@ function DecisionLedger:GetRecent(limit)
     if self._destroyed then
         return {}, "Destroyed"
     end
-    local requested = limit or self._count
-    if not isFiniteNumber(requested) or requested % 1 ~= 0 or requested < 0 then
+
+    local requested = limit
+    if requested == nil then
+        requested = self._count
+    end
+    if not isFiniteNumber(requested)
+        or requested % 1 ~= 0
+        or requested < 0 then
         return {}, "InvalidLimit"
     end
+
     local amount = math.min(requested, self._count, self._capacity)
     local result = table.create(amount)
     local oldestIndex = ((self._nextIndex - self._count - 1) % self._capacity) + 1
     local skip = self._count - amount
+
     for offset = skip, self._count - 1 do
         local index = ((oldestIndex + offset - 1) % self._capacity) + 1
         local source = self._records[index]
+
         if source then
             result[#result + 1] = {
                 decisionType = source.decisionType,
@@ -152,6 +175,7 @@ function DecisionLedger:GetRecent(limit)
             }
         end
     end
+
     return result, "OK"
 end
 
@@ -159,6 +183,7 @@ function DecisionLedger:GetSummary()
     if self._destroyed then
         return nil, "Destroyed"
     end
+
     return {
         storedRecords = self._count,
         capacity = self._capacity,
@@ -169,9 +194,11 @@ function DecisionLedger:Reset()
     if self._destroyed then
         return false, "Destroyed"
     end
+
     table.clear(self._records)
     self._nextIndex = 1
     self._count = 0
+
     return true, "Reset"
 end
 
@@ -179,6 +206,7 @@ function DecisionLedger:Destroy()
     if self._destroyed then
         return
     end
+
     table.clear(self._records)
     self._nextIndex = 1
     self._count = 0
