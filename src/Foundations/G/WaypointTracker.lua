@@ -53,6 +53,30 @@ local function copyProgress(progress)
     return result
 end
 
+local function getDenseArrayLength(array, maximum)
+    local count = 0
+    local highestIndex = 0
+
+    for key in pairs(array) do
+        if type(key) ~= "number"
+            or not isFiniteNumber(key)
+            or key % 1 ~= 0
+            or key < 1
+            or key > maximum then
+            return nil
+        end
+
+        count += 1
+        highestIndex = math.max(highestIndex, key)
+    end
+
+    if count ~= highestIndex then
+        return nil
+    end
+
+    return count
+end
+
 function WaypointTracker.new(config)
     assert(type(config) == "table", "WaypointTracker requires validated config")
 
@@ -85,8 +109,22 @@ function WaypointTracker:SetPath(pathPacket)
         return false, "InvalidWaypoints"
     end
 
-    local waypointCount = #pathPacket.waypoints
     local maximum = self.Config.maxTrackedWaypoints or 512
+
+    if not isFiniteNumber(maximum)
+        or maximum % 1 ~= 0
+        or maximum < 1 then
+        return false, "InvalidWaypointLimit"
+    end
+
+    local waypointCount = getDenseArrayLength(
+        pathPacket.waypoints,
+        maximum
+    )
+
+    if waypointCount == nil then
+        return false, "InvalidWaypointArray"
+    end
 
     if waypointCount == 0 then
         return false, "EmptyWaypoints"
@@ -98,10 +136,20 @@ function WaypointTracker:SetPath(pathPacket)
 
     local copied = {}
 
-    for index, waypoint in ipairs(pathPacket.waypoints) do
+    for index = 1, waypointCount do
+        local waypoint = pathPacket.waypoints[index]
+
         if type(waypoint) ~= "table"
             or not isFiniteVector3(waypoint.position) then
             return false, "InvalidWaypoint"
+        end
+
+        if waypoint.label ~= nil and type(waypoint.label) ~= "string" then
+            return false, "InvalidWaypointLabel"
+        end
+
+        if waypoint.action ~= nil and typeof(waypoint.action) ~= "EnumItem" then
+            return false, "InvalidWaypointAction"
         end
 
         copied[index] = {
@@ -112,6 +160,7 @@ function WaypointTracker:SetPath(pathPacket)
         }
     end
 
+    -- Commit the new tracking state only after every waypoint passes validation.
     self._waypoints = copied
     self._requestId = pathPacket.requestId
     self._currentIndex = 1
@@ -135,11 +184,36 @@ function WaypointTracker:Update(position)
         return nil, "InvalidPosition"
     end
 
+    local maximumAdvances =
+        self.Config.maxWaypointAdvancesPerUpdate or 4
+
+    local reachedDistance =
+        self.Config.waypointReachedDistance or 2.75
+
+    local climbReachedDistance =
+        self.Config.climbWaypointReachedDistance or 3.5
+
+    local verticalLimit =
+        self.Config.maxWaypointVerticalError or 5.0
+
+    if not isFiniteNumber(maximumAdvances)
+        or maximumAdvances % 1 ~= 0
+        or maximumAdvances < 1 then
+        return nil, "InvalidAdvanceLimit"
+    end
+
+    if not isFiniteNumber(reachedDistance)
+        or reachedDistance <= 0
+        or not isFiniteNumber(climbReachedDistance)
+        or climbReachedDistance <= 0
+        or not isFiniteNumber(verticalLimit)
+        or verticalLimit <= 0 then
+        return nil, "InvalidTrackingConfiguration"
+    end
+
     self._lastPosition = position
 
     local advances = 0
-    local maximumAdvances =
-        self.Config.maxWaypointAdvancesPerUpdate or 4
 
     while self._currentIndex <= #self._waypoints
         and advances < maximumAdvances do
@@ -147,19 +221,14 @@ function WaypointTracker:Update(position)
         local waypoint = self._waypoints[self._currentIndex]
         local difference = position - waypoint.position
 
-        local reachedDistance =
-            self.Config.waypointReachedDistance or 2.75
+        local currentReachedDistance = reachedDistance
 
         -- Climb is a PathWaypoint label, not a PathWaypointAction enum.
         if waypoint.label == "Climb" then
-            reachedDistance =
-                self.Config.climbWaypointReachedDistance or 3.5
+            currentReachedDistance = climbReachedDistance
         end
 
-        local verticalLimit =
-            self.Config.maxWaypointVerticalError or 5.0
-
-        if difference.Magnitude > reachedDistance
+        if difference.Magnitude > currentReachedDistance
             or math.abs(difference.Y) > verticalLimit then
             break
         end
