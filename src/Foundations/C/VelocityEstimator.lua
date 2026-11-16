@@ -21,6 +21,18 @@ local function isFiniteVector3(value)
         and isFiniteNumber(value.Z)
 end
 
+local function isModel(value)
+    if typeof(value) ~= "Instance" then
+        return false
+    end
+
+    local success, result = pcall(function()
+        return value:IsA("Model")
+    end)
+
+    return success and result == true
+end
+
 local function copyEstimate(estimate)
     if not estimate then
         return nil
@@ -62,8 +74,7 @@ function VelocityEstimator:Update(snapshot)
     end
 
     if type(snapshot) ~= "table"
-        or typeof(snapshot.model) ~= "Instance"
-        or not snapshot.model:IsA("Model")
+        or not isModel(snapshot.model)
         or not isFiniteVector3(snapshot.position) then
         return nil, "InvalidSnapshot"
     end
@@ -174,11 +185,7 @@ function VelocityEstimator:Update(snapshot)
 end
 
 function VelocityEstimator:GetEstimate(model)
-    if self._destroyed then
-        return nil
-    end
-
-    if typeof(model) ~= "Instance" or not model:IsA("Model") then
+    if self._destroyed or not isModel(model) then
         return nil
     end
 
@@ -200,7 +207,7 @@ function VelocityEstimator:Reset(model)
         return true, "AllSamplesReset"
     end
 
-    if typeof(model) ~= "Instance" or not model:IsA("Model") then
+    if not isModel(model) then
         return false, "InvalidModel"
     end
 
