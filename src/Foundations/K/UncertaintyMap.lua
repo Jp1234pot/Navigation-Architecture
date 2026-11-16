@@ -1,9 +1,12 @@
+
 -- Navigation Architecture v2.2
 -- Foundation K: UncertaintyMap
 -- Bounded, session-only grid of observation uncertainty. No world scanning or raycasts.
 
 local UncertaintyMap = {}
 UncertaintyMap.__index = UncertaintyMap
+
+local MAX_GRID_INDEX = 9007199254740991
 
 local function isFiniteNumber(value)
     return type(value) == "number"
@@ -17,6 +20,31 @@ local function isFiniteVector3(value)
         and isFiniteNumber(value.X)
         and isFiniteNumber(value.Y)
         and isFiniteNumber(value.Z)
+end
+
+local function getGridCoordinates(position, cellSize)
+    if not isFiniteVector3(position) then
+        return nil, nil, "InvalidPosition"
+    end
+
+    local gridX = math.floor(position.X / cellSize)
+    local gridZ = math.floor(position.Z / cellSize)
+
+    if not isFiniteNumber(gridX)
+        or not isFiniteNumber(gridZ)
+        or math.abs(gridX) > MAX_GRID_INDEX
+        or math.abs(gridZ) > MAX_GRID_INDEX then
+        return nil, nil, "InvalidGridCoordinates"
+    end
+
+    local centerX = (gridX + 0.5) * cellSize
+    local centerZ = (gridZ + 0.5) * cellSize
+
+    if not isFiniteNumber(centerX) or not isFiniteNumber(centerZ) then
+        return nil, nil, "InvalidGridCenter"
+    end
+
+    return gridX, gridZ, nil, centerX, centerZ
 end
 
 local function makeKey(gridX, gridZ)
@@ -60,13 +88,21 @@ function UncertaintyMap:Observe(position, uncertainty, reason, observedAt)
         return false, "InvalidReason"
     end
 
-    local timestamp = observedAt or os.clock()
+    local timestamp = observedAt
+    if timestamp == nil then
+        timestamp = os.clock()
+    end
     if not isFiniteNumber(timestamp) or timestamp > os.clock() + 1 then
         return false, "InvalidTimestamp"
     end
 
-    local gridX = math.floor(position.X / self.Config.uncertaintyCellSize)
-    local gridZ = math.floor(position.Z / self.Config.uncertaintyCellSize)
+    local gridX, gridZ, gridError, centerX, centerZ =
+        getGridCoordinates(position, self.Config.uncertaintyCellSize)
+
+    if gridError then
+        return false, gridError
+    end
+
     local key = makeKey(gridX, gridZ)
     local cell = self._cells[key]
 
@@ -81,12 +117,16 @@ function UncertaintyMap:Observe(position, uncertainty, reason, observedAt)
     if self._count >= self.Config.maxUncertaintyCells then
         local oldestKey = nil
         local oldestTimestamp = math.huge
+
         for existingKey, existingCell in pairs(self._cells) do
-            if existingCell.timestamp < oldestTimestamp then
+            if existingCell.timestamp < oldestTimestamp
+                or (existingCell.timestamp == oldestTimestamp
+                    and (oldestKey == nil or existingKey < oldestKey)) then
                 oldestTimestamp = existingCell.timestamp
                 oldestKey = existingKey
             end
         end
+
         if oldestKey then
             self._cells[oldestKey] = nil
             self._count -= 1
@@ -97,13 +137,14 @@ function UncertaintyMap:Observe(position, uncertainty, reason, observedAt)
         key = key,
         gridX = gridX,
         gridZ = gridZ,
-        centerX = (gridX + 0.5) * self.Config.uncertaintyCellSize,
-        centerZ = (gridZ + 0.5) * self.Config.uncertaintyCellSize,
+        centerX = centerX,
+        centerZ = centerZ,
         uncertainty = uncertainty,
         observations = 1,
         reason = reason,
         timestamp = timestamp,
     }
+
     self._count = math.min(self._count + 1, self.Config.maxUncertaintyCells)
     return true, "Recorded", key
 end
@@ -118,19 +159,35 @@ function UncertaintyMap:GetAt(position, now)
     if not isFiniteVector3(position) then
         return nil, "InvalidPosition"
     end
-    local gridX = math.floor(position.X / self.Config.uncertaintyCellSize)
-    local gridZ = math.floor(position.Z / self.Config.uncertaintyCellSize)
+
+    local currentTime = now
+    if currentTime == nil then
+        currentTime = os.clock()
+    end
+    if not isFiniteNumber(currentTime) then
+        return nil, "InvalidTimestamp"
+    end
+
+    local gridX, gridZ, gridError =
+        getGridCoordinates(position, self.Config.uncertaintyCellSize)
+
+    if gridError then
+        return nil, gridError
+    end
+
     local cell = self._cells[makeKey(gridX, gridZ)]
     if not cell then
         return nil, "UnknownCell"
     end
-    local age = (now or os.clock()) - cell.timestamp
+
+    local age = currentTime - cell.timestamp
     if not isFiniteNumber(age) or age < 0 then
         return nil, "InvalidTimestamp"
     end
     if age > self.Config.uncertaintyMaxAge then
         return nil, "StaleCell"
     end
+
     return {
         key = cell.key,
         gridX = cell.gridX,
@@ -153,19 +210,38 @@ function UncertaintyMap:GetCells(limit, now)
         return {}, "Disabled"
     end
 
-    local requested = limit or self.Config.maxUncertaintyCells
-    if not isFiniteNumber(requested) or requested % 1 ~= 0 or requested < 0 then
+    local requested = limit
+    if requested == nil then
+        requested = self.Config.maxUncertaintyCells
+    end
+    if not isFiniteNumber(requested)
+        or requested % 1 ~= 0
+        or requested < 0 then
         return {}, "InvalidLimit"
     end
-    local currentTime = now or os.clock()
+
+    local currentTime = now
+    if currentTime == nil then
+        currentTime = os.clock()
+    end
     if not isFiniteNumber(currentTime) then
         return {}, "InvalidTimestamp"
     end
 
     local result = {}
+    local freshCount = 0
+    local staleCount = 0
+    local futureCount = 0
+
     for _, cell in pairs(self._cells) do
         local age = currentTime - cell.timestamp
-        if age >= 0 and age <= self.Config.uncertaintyMaxAge then
+
+        if age < 0 then
+            futureCount += 1
+        elseif age > self.Config.uncertaintyMaxAge then
+            staleCount += 1
+        else
+            freshCount += 1
             result[#result + 1] = {
                 key = cell.key,
                 gridX = cell.gridX,
@@ -180,25 +256,54 @@ function UncertaintyMap:GetCells(limit, now)
             }
         end
     end
+
     table.sort(result, function(a, b)
         if a.timestamp == b.timestamp then
             return a.key < b.key
         end
         return a.timestamp > b.timestamp
     end)
+
     local keepCount = math.min(requested, self.Config.maxUncertaintyCells)
     for index = #result, keepCount + 1, -1 do
         result[index] = nil
     end
-    return result, "OK"
+
+    return result, "OK", {
+        storedCells = self._count,
+        freshCells = freshCount,
+        staleCells = staleCount,
+        futureDatedCells = futureCount,
+    }
 end
 
 function UncertaintyMap:GetSummary()
     if self._destroyed then
         return nil, "Destroyed"
     end
+
+    local currentTime = os.clock()
+    local freshCount = 0
+    local staleCount = 0
+    local futureCount = 0
+
+    for _, cell in pairs(self._cells) do
+        local age = currentTime - cell.timestamp
+
+        if age < 0 then
+            futureCount += 1
+        elseif age > self.Config.uncertaintyMaxAge then
+            staleCount += 1
+        else
+            freshCount += 1
+        end
+    end
+
     return {
         storedCells = self._count,
+        freshCells = freshCount,
+        staleCells = staleCount,
+        futureDatedCells = futureCount,
         capacity = self.Config.maxUncertaintyCells,
         cellSize = self.Config.uncertaintyCellSize,
         isOccupancyMap = false,
@@ -209,8 +314,10 @@ function UncertaintyMap:Reset()
     if self._destroyed then
         return false, "Destroyed"
     end
+
     table.clear(self._cells)
     self._count = 0
+
     return true, "Reset"
 end
 
@@ -218,6 +325,7 @@ function UncertaintyMap:Destroy()
     if self._destroyed then
         return
     end
+
     table.clear(self._cells)
     self._count = 0
     self._destroyed = true
