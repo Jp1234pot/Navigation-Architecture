@@ -124,8 +124,16 @@ end
 
 function PathfindingEngine:_disconnectActivePath()
     for _, connection in ipairs(self._activeConnections) do
-        if connection and connection.Connected then
-            connection:Disconnect()
+        if connection then
+            local connectedSuccess, isConnected = pcall(function()
+                return connection.Connected
+            end)
+
+            if connectedSuccess and isConnected then
+                pcall(function()
+                    connection:Disconnect()
+                end)
+            end
         end
     end
     table.clear(self._activeConnections)
@@ -283,29 +291,72 @@ function PathfindingEngine:RequestPath(startPosition, finishPosition)
         local waypoints = copyWaypoints(rawWaypoints)
         self._activePath = path
 
-        local blockedConnection = path.Blocked:Connect(function(blockedWaypointIndex)
-            if self._destroyed or requestId ~= self._generation or self._activePath ~= path then
-                return
-            end
-            self:_emit(self._onBlocked, {
-                requestId = requestId,
-                blockedWaypointIndex = blockedWaypointIndex,
-                timestamp = os.clock(),
-                note = "Raw engine event; index may refer to a waypoint behind the agent.",
-            }, "blocked")
+        local blockedConnectSuccess, blockedConnectionOrError = pcall(function()
+            return path.Blocked:Connect(function(blockedWaypointIndex)
+                if self._destroyed or requestId ~= self._generation or self._activePath ~= path then
+                    return
+                end
+                self:_emit(self._onBlocked, {
+                    requestId = requestId,
+                    blockedWaypointIndex = blockedWaypointIndex,
+                    timestamp = os.clock(),
+                    note = "Raw engine event; index may refer to a waypoint behind the agent.",
+                }, "blocked")
+            end)
         end)
-        table.insert(self._activeConnections, blockedConnection)
 
-        local unblockedConnection = path.Unblocked:Connect(function(unblockedWaypointIndex)
-            if self._destroyed or requestId ~= self._generation or self._activePath ~= path then
-                return
-            end
-            self:_emit(self._onUnblocked, {
-                requestId = requestId,
-                unblockedWaypointIndex = unblockedWaypointIndex,
-                timestamp = os.clock(),
-            }, "unblocked")
+        if not blockedConnectSuccess then
+            self._activePath = nil
+            pcall(function()
+                path:Destroy()
+            end)
+            self:_completeFailure(
+                requestId,
+                startPosition,
+                finishPosition,
+                "BlockedConnectionFailed",
+                tostring(blockedConnectionOrError)
+            )
+            return
+        end
+
+        local blockedConnection = blockedConnectionOrError
+
+        local unblockedConnectSuccess, unblockedConnectionOrError = pcall(function()
+            return path.Unblocked:Connect(function(unblockedWaypointIndex)
+                if self._destroyed or requestId ~= self._generation or self._activePath ~= path then
+                    return
+                end
+                self:_emit(self._onUnblocked, {
+                    requestId = requestId,
+                    unblockedWaypointIndex = unblockedWaypointIndex,
+                    timestamp = os.clock(),
+                }, "unblocked")
+            end)
         end)
+
+        if not unblockedConnectSuccess then
+            pcall(function()
+                blockedConnection:Disconnect()
+            end)
+
+            self._activePath = nil
+            pcall(function()
+                path:Destroy()
+            end)
+            self:_completeFailure(
+                requestId,
+                startPosition,
+                finishPosition,
+                "UnblockedConnectionFailed",
+                tostring(unblockedConnectionOrError)
+            )
+            return
+        end
+
+        local unblockedConnection = unblockedConnectionOrError
+
+        table.insert(self._activeConnections, blockedConnection)
         table.insert(self._activeConnections, unblockedConnection)
 
         self:_publish({
