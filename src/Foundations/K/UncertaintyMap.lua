@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Foundation K: UncertaintyMap
 -- Bounded, session-only grid of observation uncertainty. No world scanning or raycasts.
@@ -150,6 +149,10 @@ function UncertaintyMap:GetCells(limit, now)
     if self._destroyed then
         return {}, "Destroyed"
     end
+    if not self.Config.evidenceLedgerEnabled then
+        return {}, "Disabled"
+    end
+
     local requested = limit or self.Config.maxUncertaintyCells
     if not isFiniteNumber(requested) or requested % 1 ~= 0 or requested < 0 then
         return {}, "InvalidLimit"
