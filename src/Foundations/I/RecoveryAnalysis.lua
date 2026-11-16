@@ -14,6 +14,7 @@ local ALLOWED_KINDS = {
     RepathDecision = true,
     CircuitBreaker = true,
     RequestRejected = true,
+    ThreatAnalysis = true,
 }
 
 local function isFiniteNumber(value)
@@ -42,6 +43,7 @@ function RecoveryAnalysis.new(config)
             RepathDecision = 0,
             CircuitBreaker = 0,
             RequestRejected = 0,
+            ThreatAnalysis = 0,
         },
         _destroyed = false,
     }, RecoveryAnalysis)
