@@ -1,7 +1,7 @@
 
 -- Navigation Architecture v2.2
 -- Module: WaypointTracker
--- Foundation G: bounded, read-only waypoint progress tracking.
+-- Foundation G: bounded, still read-only waypoint progress tracking.
 
 local WaypointTracker = {}
 WaypointTracker.__index = WaypointTracker
