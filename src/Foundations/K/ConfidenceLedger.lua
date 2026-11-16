@@ -1,3 +1,4 @@
+
 -- Navigation Architecture v2.2
 -- Foundation K: ConfidenceLedger
 -- Bounded, session-only evidence aggregation. No world access or automatic sampling.
@@ -69,10 +70,10 @@ function ConfidenceLedger:Record(subjectKey, evidenceKind, polarity, quality, ob
     if not validText(subjectKey, 64) then
         return false, "InvalidSubjectKey"
     end
-    if not ALLOWED_EVIDENCE[evidenceKind] then
+    if type(evidenceKind) ~= "string" or not ALLOWED_EVIDENCE[evidenceKind] then
         return false, "UnsupportedEvidenceKind"
     end
-    if not ALLOWED_POLARITY[polarity] then
+    if type(polarity) ~= "string" or not ALLOWED_POLARITY[polarity] then
         return false, "InvalidPolarity"
     end
     if not isFiniteNumber(quality) or quality < 0 or quality > 1 then
@@ -118,7 +119,11 @@ function ConfidenceLedger:Assess(subjectKey, now)
     if not validText(subjectKey, 64) then
         return nil, "InvalidSubjectKey"
     end
-    local currentTime = now or os.clock()
+
+    local currentTime = now
+    if currentTime == nil then
+        currentTime = os.clock()
+    end
     if not isFiniteNumber(currentTime) then
         return nil, "InvalidTimestamp"
     end
@@ -204,14 +209,20 @@ function ConfidenceLedger:GetRecent(limit)
     if self._destroyed then
         return {}, "Destroyed"
     end
-    local requested = limit or self._count
+
+    local requested = limit
+    if requested == nil then
+        requested = self._count
+    end
     if not isFiniteNumber(requested) or requested % 1 ~= 0 or requested < 0 then
         return {}, "InvalidLimit"
     end
+
     local amount = math.min(requested, self._count, self._capacity)
     local result = table.create(amount)
     local oldestIndex = ((self._nextIndex - self._count - 1) % self._capacity) + 1
     local skip = self._count - amount
+
     for offset = skip, self._count - 1 do
         local index = ((oldestIndex + offset - 1) % self._capacity) + 1
         local source = self._records[index]
@@ -226,6 +237,7 @@ function ConfidenceLedger:GetRecent(limit)
             }
         end
     end
+
     return result, "OK"
 end
 
@@ -258,6 +270,7 @@ function ConfidenceLedger:Destroy()
     table.clear(self._records)
     self._count = 0
     self._nextIndex = 1
+    self._totalRecorded = 0
     self._destroyed = true
 end
 
