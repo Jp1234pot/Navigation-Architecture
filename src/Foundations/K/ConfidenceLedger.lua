@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Foundation K: ConfidenceLedger
 -- Bounded, session-only evidence aggregation. No world access or automatic sampling.
@@ -128,6 +127,7 @@ function ConfidenceLedger:Assess(subjectKey, now)
     local contradictingWeight = 0
     local neutralWeight = 0
     local effectiveSamples = 0
+    local directionalSamples = 0
     local freshestAge = nil
     local kindCounts = {}
 
@@ -144,10 +144,13 @@ function ConfidenceLedger:Assess(subjectKey, now)
                     effectiveSamples += 1
                     kindCounts[record.evidenceKind] = (kindCounts[record.evidenceKind] or 0) + 1
                     freshestAge = freshestAge and math.min(freshestAge, age) or age
+
                     if record.polarity == "Supports" then
                         supportingWeight += weight
+                        directionalSamples += 1
                     elseif record.polarity == "Contradicts" then
                         contradictingWeight += weight
+                        directionalSamples += 1
                     else
                         neutralWeight += weight
                     end
@@ -168,7 +171,7 @@ function ConfidenceLedger:Assess(subjectKey, now)
             direction = "Inconclusive"
         end
         local agreement = math.abs(supportingWeight - contradictingWeight) / directionalWeight
-        local coverage = math.min(1, effectiveSamples / self.Config.evidenceMinSamples)
+        local coverage = math.min(1, directionalSamples / self.Config.evidenceMinSamples)
         score = math.floor(agreement * coverage * 100 + 0.5)
     end
 
@@ -187,6 +190,7 @@ function ConfidenceLedger:Assess(subjectKey, now)
         confidenceScore = score,
         status = status,
         effectiveSamples = effectiveSamples,
+        directionalSamples = directionalSamples,
         supportingWeight = supportingWeight,
         contradictingWeight = contradictingWeight,
         neutralWeight = neutralWeight,
