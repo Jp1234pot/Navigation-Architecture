@@ -7,6 +7,10 @@
 local CharacterManager = {}
 CharacterManager.__index = CharacterManager
 
+local function isModel(value)
+	return typeof(value) == "Instance" and value:IsA("Model")
+end
+
 function CharacterManager.new(localPlayer)
 	assert(
 		typeof(localPlayer) == "Instance"
@@ -29,7 +33,7 @@ function CharacterManager:GetCharacter()
 
 	local character = self._player.Character
 
-	if character and character:IsA("Model") then
+	if isModel(character) then
 		return character
 	end
 
@@ -43,13 +47,11 @@ function CharacterManager:GetHumanoid(character)
 
 	character = character or self:GetCharacter()
 
-	if not character or not character:IsA("Model") then
+	if not isModel(character) then
 		return nil
 	end
 
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-
-	return humanoid
+	return character:FindFirstChildOfClass("Humanoid")
 end
 
 function CharacterManager:GetRoot(character)
@@ -59,7 +61,7 @@ function CharacterManager:GetRoot(character)
 
 	character = character or self:GetCharacter()
 
-	if not character or not character:IsA("Model") then
+	if not isModel(character) then
 		return nil
 	end
 
@@ -89,7 +91,7 @@ function CharacterManager:IsAlive(character)
 
 	character = character or self:GetCharacter()
 
-	if not character then
+	if not isModel(character) then
 		return false
 	end
 
