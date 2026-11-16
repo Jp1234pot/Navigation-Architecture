@@ -53,12 +53,15 @@ function RecoveryAnalysis:Record(kind, reason, numericValue)
     if self._destroyed then
         return false, "Destroyed"
     end
-    if not ALLOWED_KINDS[kind] then
+
+    if type(kind) ~= "string" or not ALLOWED_KINDS[kind] then
         return false, "UnsupportedRecordKind"
     end
+
     if type(reason) ~= "string" or #reason == 0 or #reason > 96 then
         return false, "InvalidReason"
     end
+
     if numericValue ~= nil and not isFiniteNumber(numericValue) then
         return false, "InvalidNumericValue"
     end
@@ -74,6 +77,7 @@ function RecoveryAnalysis:Record(kind, reason, numericValue)
     self._nextIndex = (self._nextIndex % self._capacity) + 1
     self._count = math.min(self._count + 1, self._capacity)
     self._totals[kind] = math.min(self._totals[kind] + 1, 2147483647)
+
     return true, "Recorded"
 end
 
@@ -81,9 +85,11 @@ function RecoveryAnalysis:GetRecent(limit)
     if self._destroyed then
         return {}, "Destroyed"
     end
+
     if limit == nil then
         limit = self._count
     end
+
     if not isFiniteNumber(limit) or limit % 1 ~= 0 or limit < 0 then
         return {}, "InvalidLimit"
     end
@@ -92,9 +98,11 @@ function RecoveryAnalysis:GetRecent(limit)
     local result = table.create(amount)
     local oldestIndex = ((self._nextIndex - self._count - 1) % self._capacity) + 1
     local skip = self._count - amount
+
     for offset = skip, self._count - 1 do
         local index = ((oldestIndex + offset - 1) % self._capacity) + 1
         local source = self._records[index]
+
         if source then
             result[#result + 1] = {
                 kind = source.kind,
@@ -104,6 +112,7 @@ function RecoveryAnalysis:GetRecent(limit)
             }
         end
     end
+
     return result, "OK"
 end
 
@@ -111,10 +120,12 @@ function RecoveryAnalysis:GetSummary()
     if self._destroyed then
         return nil, "Destroyed"
     end
+
     local totals = {}
     for kind, count in pairs(self._totals) do
         totals[kind] = count
     end
+
     return {
         storedRecords = self._count,
         capacity = self._capacity,
@@ -126,12 +137,15 @@ function RecoveryAnalysis:Reset()
     if self._destroyed then
         return false, "Destroyed"
     end
+
     table.clear(self._records)
     self._nextIndex = 1
     self._count = 0
+
     for kind in pairs(self._totals) do
         self._totals[kind] = 0
     end
+
     return true, "Reset"
 end
 
@@ -139,6 +153,7 @@ function RecoveryAnalysis:Destroy()
     if self._destroyed then
         return
     end
+
     table.clear(self._records)
     table.clear(self._totals)
     self._count = 0
