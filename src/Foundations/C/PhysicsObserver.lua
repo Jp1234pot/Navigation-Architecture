@@ -41,6 +41,46 @@ local function findRoot(model, humanoid)
     return nil
 end
 
+-- Protects model validation and component lookup against Instances
+-- becoming unavailable during inspection.
+local function getModelParts(model)
+    if typeof(model) ~= "Instance" then
+        return nil, nil, "InvalidModel"
+    end
+
+    local success, humanoid, root, status = pcall(function()
+        if not model:IsA("Model") then
+            return nil, nil, "InvalidModel"
+        end
+
+        local foundHumanoid = model:FindFirstChildOfClass("Humanoid")
+        if not foundHumanoid then
+            return nil, nil, "HumanoidUnavailable"
+        end
+
+        local foundRoot = findRoot(model, foundHumanoid)
+        if not foundRoot then
+            return nil, nil, "RootUnavailable"
+        end
+
+        return foundHumanoid, foundRoot, "OK"
+    end)
+
+    if not success then
+        return nil, nil, "ReadFailed"
+    end
+
+    return humanoid, root, status
+end
+
+local function isInWorkspace(model)
+    local success, result = pcall(function()
+        return model:IsDescendantOf(Workspace)
+    end)
+
+    return success and result == true
+end
+
 function PhysicsObserver.new()
     return setmetatable({
         Destroyed = false,
@@ -54,25 +94,13 @@ function PhysicsObserver:Observe(model)
         return nil, "Destroyed"
     end
 
-    if typeof(model) ~= "Instance" or not model:IsA("Model") then
-        return nil, "InvalidModel"
+    local humanoid, root, partsStatus = getModelParts(model)
+    if partsStatus ~= "OK" then
+        return nil, partsStatus
     end
 
-    local presentOk, isPresent = pcall(function()
-        return model:IsDescendantOf(Workspace)
-    end)
-    if not presentOk or not isPresent then
+    if not isInWorkspace(model) then
         return nil, "ModelNotInWorkspace"
-    end
-
-    local humanoid = model:FindFirstChildOfClass("Humanoid")
-    if not humanoid then
-        return nil, "HumanoidUnavailable"
-    end
-
-    local root = findRoot(model, humanoid)
-    if not root then
-        return nil, "RootUnavailable"
     end
 
     local success, snapshot = pcall(function()
@@ -124,25 +152,13 @@ function PhysicsObserver:ObservePosition(model)
         return nil, "Destroyed"
     end
 
-    if typeof(model) ~= "Instance" or not model:IsA("Model") then
-        return nil, "InvalidModel"
+    local humanoid, root, partsStatus = getModelParts(model)
+    if partsStatus ~= "OK" then
+        return nil, partsStatus
     end
 
-    local presentOk, isPresent = pcall(function()
-        return model:IsDescendantOf(Workspace)
-    end)
-    if not presentOk or not isPresent then
+    if not isInWorkspace(model) then
         return nil, "ModelNotInWorkspace"
-    end
-
-    local humanoid = model:FindFirstChildOfClass("Humanoid")
-    if not humanoid then
-        return nil, "HumanoidUnavailable"
-    end
-
-    local root = findRoot(model, humanoid)
-    if not root then
-        return nil, "RootUnavailable"
     end
 
     local success, snapshot = pcall(function()
@@ -155,6 +171,7 @@ function PhysicsObserver:ObservePosition(model)
             source = "PositionOnly",
         }
     end)
+
     if not success then
         return nil, "ReadFailed"
     end
