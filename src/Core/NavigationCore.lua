@@ -17,174 +17,84 @@ NavigationCore.__index = NavigationCore
 
 local MODULE_INTERFACES = {
     StateManager = {
-        "GetState",
-        "GetLastReason",
-        "SetState",
-        "Destroy",
+        "GetState", "GetLastReason", "SetState", "Destroy",
     },
-
     LifecycleManager = {
-        "Connect",
-        "Disconnect",
-        "AddCleanup",
-        "Destroy",
+        "Connect", "Disconnect", "AddCleanup", "Destroy",
     },
-
     CharacterManager = {
-        "GetCharacter",
-        "GetHumanoid",
-        "GetRoot",
-        "IsAlive",
-        "IsAnchored",
-        "Destroy",
+        "GetCharacter", "GetHumanoid", "GetRoot",
+        "IsAlive", "IsAnchored", "Destroy",
     },
-
     FactionValidator = {
-        "GetPlayerFaction",
-        "GetModelFaction",
-        "Classify",
-        "IsEligible",
+        "GetPlayerFaction", "GetModelFaction",
+        "Classify", "IsEligible",
     },
-
     TargetDiscovery = {
-        "GetCandidates",
-        "FindNearest",
-        "IsCandidateCurrent",
+        "GetCandidates", "FindNearest", "IsCandidateCurrent",
     },
-
     PhysicsObserver = {
-        "Observe",
-        "ObservePosition",
-        "Destroy",
+        "Observe", "ObservePosition", "Destroy",
     },
-
     VelocityEstimator = {
-        "Update",
-        "GetEstimate",
-        "Reset",
-        "Destroy",
+        "Update", "GetEstimate", "Reset", "Destroy",
     },
-
     SamplingCoordinator = {
-        "SetOnSample",
-        "SetTarget",
-        "ClearTarget",
-        "Start",
-        "Stop",
-        "GetLatest",
-        "Destroy",
+        "SetOnSample", "SetTarget", "ClearTarget",
+        "Start", "Stop", "GetLatest", "Destroy",
     },
-
     TelemetryPanel = {
-        "Update",
-        "SetVisible",
-        "Destroy",
+        "Update", "SetVisible", "Destroy",
     },
-
     PathfindingEngine = {
-        "SetOnResult",
-        "SetOnBlocked",
-        "SetOnUnblocked",
-        "RequestPath",
-        "Cancel",
-        "GetLatest",
-        "Destroy",
+        "SetOnResult", "SetOnBlocked", "SetOnUnblocked",
+        "RequestPath", "Cancel", "GetLatest", "Destroy",
     },
-
     WaypointTracker = {
-        "SetPath",
-        "Update",
-        "GetProgress",
-        "Reset",
-        "Destroy",
+        "SetPath", "Update", "GetProgress", "Reset", "Destroy",
     },
-
     MovementController = {
-        "SetOnStatus",
-        "GetStatus",
-        "Start",
-        "Stop",
-        "Destroy",
+        "SetOnStatus", "GetStatus", "Start", "Stop", "Destroy",
     },
-
     AdaptiveRepath = {
-        "Consider",
-        "ReportOutcome",
-        "GetState",
-        "Reset",
-        "Destroy",
+        "Consider", "ReportOutcome", "GetState", "Reset", "Destroy",
     },
-
     RecoveryAnalysis = {
-        "Record",
-        "GetRecent",
-        "GetSummary",
-        "Reset",
-        "Destroy",
+        "Record", "GetRecent", "GetSummary", "Reset", "Destroy",
     },
-
     MultiThreatAnalysis = {
-        "Analyze",
-        "Destroy",
+        "Analyze", "Destroy",
     },
-
     ConfidenceLedger = {
-        "Record",
-        "Assess",
-        "GetRecent",
-        "GetSummary",
-        "Reset",
-        "Destroy",
+        "Record", "Assess", "GetRecent", "GetSummary", "Reset", "Destroy",
     },
-
     DecisionLedger = {
-        "Record",
-        "GetRecent",
-        "GetSummary",
-        "Reset",
-        "Destroy",
+        "Record", "GetRecent", "GetSummary", "Reset", "Destroy",
     },
-
     UncertaintyMap = {
-        "Observe",
-        "GetAt",
-        "GetCells",
-        "GetSummary",
-        "Reset",
-        "Destroy",
+        "Observe", "GetAt", "GetCells", "GetSummary", "Reset", "Destroy",
     },
 }
 
--- Capabilities describe groups of public interfaces.
--- Their activation flags describe configuration intent, not automatic execution.
-
 local CAPABILITY_DEFINITIONS = {
     TargetDiscovery = {
-        modules = {
-            "FactionValidator",
-            "TargetDiscovery",
-        },
+        modules = {"FactionValidator", "TargetDiscovery"},
         enabled = function(config)
-            return config.enabled == true
+            return config.enabled
         end,
     },
 
     PhysicalObservation = {
-        modules = {
-            "PhysicsObserver",
-        },
+        modules = {"PhysicsObserver"},
         enabled = function(config)
-            return config.enabled == true
+            return config.enabled
         end,
     },
 
     VelocityAnalysis = {
-        modules = {
-            "PhysicsObserver",
-            "VelocityEstimator",
-        },
+        modules = {"PhysicsObserver", "VelocityEstimator"},
         enabled = function(config)
-            return config.enabled == true
+            return config.enabled
         end,
     },
 
@@ -197,62 +107,49 @@ local CAPABILITY_DEFINITIONS = {
             "SamplingCoordinator",
         },
         enabled = function(config)
-            return config.enabled == true
+            return config.enabled
         end,
     },
 
     TelemetryPresentation = {
-        modules = {
-            "TelemetryPanel",
-        },
+        modules = {"TelemetryPanel"},
         enabled = function(config)
-            return config.telemetryPanelEnabled == true
+            return config.telemetryPanelEnabled
         end,
     },
 
     PathComputation = {
-        modules = {
-            "PathfindingEngine",
-        },
+        modules = {"PathfindingEngine"},
         enabled = function(config)
-            return config.pathfindingEnabled == true
+            return config.pathfindingEnabled
         end,
     },
 
     WaypointProgress = {
-        modules = {
-            "WaypointTracker",
-        },
+        modules = {"WaypointTracker"},
         enabled = function(config)
-            return config.pathfindingEnabled == true
+            return config.pathfindingEnabled
         end,
     },
 
     LocalMovement = {
-        modules = {
-            "CharacterManager",
-            "MovementController",
-        },
+        modules = {"CharacterManager", "MovementController"},
         enabled = function(config)
-            return config.movementEnabled == true
+            return config.movementEnabled
         end,
     },
 
     RecoveryAnalysis = {
-        modules = {
-            "RecoveryAnalysis",
-        },
+        modules = {"RecoveryAnalysis"},
         enabled = function(config)
-            return config.adaptiveRepathEnabled == true
+            return config.adaptiveRepathEnabled
         end,
     },
 
     AdaptiveRepath = {
-        modules = {
-            "AdaptiveRepath",
-        },
+        modules = {"AdaptiveRepath"},
         enabled = function(config)
-            return config.adaptiveRepathEnabled == true
+            return config.adaptiveRepathEnabled
         end,
     },
 
@@ -264,7 +161,7 @@ local CAPABILITY_DEFINITIONS = {
             "MultiThreatAnalysis",
         },
         enabled = function(config)
-            return config.multiThreatAnalysisEnabled == true
+            return config.multiThreatAnalysisEnabled
         end,
     },
 
@@ -275,7 +172,7 @@ local CAPABILITY_DEFINITIONS = {
             "UncertaintyMap",
         },
         enabled = function(config)
-            return config.evidenceLedgerEnabled == true
+            return config.evidenceLedgerEnabled
         end,
     },
 }
@@ -294,9 +191,9 @@ local function copyRecord(source)
     return result
 end
 
-local function isValidConfig(config)
+local function validateConfig(config)
     if type(config) ~= "table" then
-        return false
+        return false, "ConfigMustBeTable"
     end
 
     local booleanKeys = {
@@ -310,12 +207,16 @@ local function isValidConfig(config)
     }
 
     for _, key in ipairs(booleanKeys) do
-        if type(config[key]) ~= "boolean" then
+        local ok, value = pcall(function()
+            return config[key]
+        end)
+
+        if not ok or type(value) ~= "boolean" then
             return false, "InvalidConfigField:" .. key
         end
     end
 
-    return true
+    return true, "OK"
 end
 
 local function validateModule(name, module)
@@ -343,23 +244,23 @@ local function validateModule(name, module)
 end
 
 local function validateModules(modules)
-    if type(modules) ~= "table" then
-        return nil, {
-            {
-                module = "modules",
-                capability = "Core",
-                stage = "Validation",
-                reason = "ModulesMustBeTable",
-            },
-        }
-    end
-
     local validModules = {}
-    local moduleErrors = {}
+    local errors = {}
+
+    if type(modules) ~= "table" then
+        errors[#errors + 1] = {
+            module = "modules",
+            capability = "Core",
+            stage = "Validation",
+            reason = "ModulesMustBeTable",
+        }
+
+        return validModules, errors
+    end
 
     for name, module in pairs(modules) do
         if type(name) ~= "string" or not MODULE_INTERFACES[name] then
-            moduleErrors[#moduleErrors + 1] = {
+            errors[#errors + 1] = {
                 module = tostring(name),
                 capability = "Core",
                 stage = "Validation",
@@ -371,7 +272,7 @@ local function validateModules(modules)
             if valid then
                 validModules[name] = module
             else
-                moduleErrors[#moduleErrors + 1] = {
+                errors[#errors + 1] = {
                     module = name,
                     capability = "Core",
                     stage = "Validation",
@@ -381,13 +282,13 @@ local function validateModules(modules)
         end
     end
 
-    return validModules, moduleErrors
+    return validModules, errors
 end
 
 local function buildCapabilities(config, modules)
     local capabilities = {}
 
-    for capabilityName, definition in pairs(CAPABILITY_DEFINITIONS) do
+    for name, definition in pairs(CAPABILITY_DEFINITIONS) do
         local missingModules = {}
 
         for _, moduleName in ipairs(definition.modules) do
@@ -407,7 +308,7 @@ local function buildCapabilities(config, modules)
             reason = "DisabledByConfiguration"
         end
 
-        capabilities[capabilityName] = {
+        capabilities[name] = {
             available = available,
             enabled = enabled,
             usable = available and enabled,
@@ -423,6 +324,8 @@ local function buildCapabilityErrors(capabilities)
     local errors = {}
 
     for name, capability in pairs(capabilities) do
+        -- Only missing dependencies of enabled capabilities
+        -- count as capability initialization errors.
         if capability.enabled and not capability.available then
             errors[#errors + 1] = {
                 module = nil,
@@ -442,80 +345,46 @@ function NavigationCore.new(dependencies)
         "NavigationCore requires a dependency package")
 
     local config = dependencies.config
+    local configValid, configReason = validateConfig(config)
 
-    local configValid, configReason = isValidConfig(config)
+    assert(configValid, configReason)
 
-    assert(configValid,
-        configReason or "NavigationCore requires a valid configuration")
+    local suppliedModules = dependencies.modules
+    if suppliedModules == nil then
+        suppliedModules = {}
+    end
 
-    local suppliedModules = dependencies.modules or {}
-
-    local validModules, moduleErrors =
-        validateModules(suppliedModules)
-
-    local capabilities =
-        buildCapabilities(config, validModules)
-
-    local capabilityErrors =
-        buildCapabilityErrors(capabilities)
+    local validModules, errors = validateModules(suppliedModules)
+    local capabilities = buildCapabilities(config, validModules)
+    local capabilityErrors = buildCapabilityErrors(capabilities)
 
     for _, err in ipairs(capabilityErrors) do
-        moduleErrors[#moduleErrors + 1] = err
+        errors[#errors + 1] = err
     end
 
-    local hasBlockingFailure = false
+    local degraded = #errors > 0
+    local status = degraded and "Degraded" or "Ready"
 
-    -- State and lifecycle services are the Core's minimum
-    -- shared infrastructure. Their absence prevents full readiness.
-    if not validModules.StateManager then
-        hasBlockingFailure = true
-    end
-
-    if not validModules.LifecycleManager then
-        hasBlockingFailure = true
-    end
-
-    local degraded = #moduleErrors > 0
-
-    local status = "Ready"
-
-    if hasBlockingFailure then
-        status = "Failed"
-    elseif degraded then
-        status = "Degraded"
-    end
-
-    local self = {
+    return setmetatable({
         Config = config,
 
         _modules = validModules,
         _capabilities = capabilities,
-        _errors = moduleErrors,
+        _errors = errors,
 
         _status = status,
-        _initialized = not hasBlockingFailure,
+        _initialized = true,
         _degraded = degraded,
         _destroyed = false,
-    }
-
-    return setmetatable(self, NavigationCore)
+    }, NavigationCore)
 end
 
 function NavigationCore:GetStatus()
-    if self._destroyed then
-        return {
-            status = "Stopped",
-            initialized = self._initialized,
-            degraded = self._degraded,
-            destroyed = true,
-        }
-    end
-
     return {
-        status = self._status,
+        status = self._destroyed and "Stopped" or self._status,
         initialized = self._initialized,
         degraded = self._degraded,
-        destroyed = false,
+        destroyed = self._destroyed,
     }
 end
 
@@ -555,8 +424,6 @@ function NavigationCore:Destroy()
     end
 
     -- Injected modules remain caller-owned.
-    -- The Core only releases its own references and internal records.
-
     self._destroyed = true
 
     table.clear(self._modules)
