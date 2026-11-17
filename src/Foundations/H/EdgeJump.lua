@@ -23,7 +23,6 @@ local GROUNDED_STATES = {
 local DEFAULT_OPTIONS = {
     cooldown = 0.25,
     probeForwardExtra = 0.05,
-    probeSideScale = 0.55,
     rayExtraDepth = 1.5,
     maxFrameDelta = 0.10,
     maxDuration = 2.5,
@@ -58,7 +57,11 @@ local function copyOptions(options)
         assert(type(options) == "table", "Options must be a table")
 
         for key, value in pairs(options) do
-            assert(DEFAULT_OPTIONS[key] ~= nil, "Unknown EdgeJump option: " .. tostring(key))
+            assert(
+                DEFAULT_OPTIONS[key] ~= nil,
+                "Unknown EdgeJump option: " .. tostring(key)
+            )
+
             result[key] = value
         end
     end
@@ -80,23 +83,10 @@ local function copyOptions(options)
     return result
 end
 
-local function isGrounded(humanoid, state)
-    if state == Enum.HumanoidStateType.Jumping
-        or state == Enum.HumanoidStateType.Freefall
-        or state == Enum.HumanoidStateType.FallingDown
-        or state == Enum.HumanoidStateType.Dead then
-        return false
-    end
-
-    if GROUNDED_STATES[state] then
-        return true
-    end
-
-    local ok, material = pcall(function()
-        return humanoid.FloorMaterial
-    end)
-
-    return ok and material ~= Enum.Material.Air
+-- Only explicit grounded locomotion states qualify.
+-- FloorMaterial alone is not reliable enough to classify every state.
+local function isGrounded(_, state)
+    return GROUNDED_STATES[state] == true
 end
 
 function EdgeJump.new(config, characterManager, options)
@@ -124,7 +114,11 @@ function EdgeJump.new(config, characterManager, options)
 
         _startTime = 0,
         _lastStartTime = 0,
+
+        -- Primary and fallback attempts have separate timestamps.
         _attemptedAt = nil,
+        _edgeCandidateAt = nil,
+        _fallbackAttemptedAt = nil,
 
         _wasGrounded = false,
         _primaryAttempted = false,
@@ -156,7 +150,10 @@ function EdgeJump:_emit(status, reason)
         })
 
         if not ok then
-            warn("[Navigation v2.2] EdgeJump callback failed: " .. tostring(err))
+            warn(
+                "[Navigation v2.2] EdgeJump callback failed: "
+                .. tostring(err)
+            )
         end
     end
 end
@@ -166,7 +163,8 @@ function EdgeJump:SetOnStatus(callbackOrNil)
         return false, "Destroyed"
     end
 
-    if callbackOrNil ~= nil and type(callbackOrNil) ~= "function" then
+    if callbackOrNil ~= nil
+        and type(callbackOrNil) ~= "function" then
         return false, "CallbackMustBeFunctionOrNil"
     end
 
@@ -265,18 +263,28 @@ function EdgeJump:_hasSupport(position, rayLength)
     return ok and result ~= nil
 end
 
+-- Predictive edge detection.
+--
+-- Requirement:
+-- 1. The character's root center still has support.
+-- 2. A small distance ahead in the movement direction has no support.
+--
+-- This deliberately removes the side probes. On narrow platforms,
+-- side probes can be unsupported even when the forward path is safe.
 function EdgeJump:_evaluateEdge()
     local humanoid = self._humanoid
     local root = self._root
 
-    local state = humanoid:GetState()
-
-    if not isGrounded(humanoid, state) then
+    if not isGrounded(humanoid, humanoid:GetState()) then
         return false
     end
 
     local movement = humanoid.MoveDirection
-    local direction = Vector3.new(movement.X, 0, movement.Z)
+    local direction = Vector3.new(
+        movement.X,
+        0,
+        movement.Z
+    )
 
     if direction.Magnitude < 0.05 then
         return false
@@ -284,33 +292,12 @@ function EdgeJump:_evaluateEdge()
 
     direction = direction.Unit
 
-    local rootRight = root.CFrame.RightVector
-    local rootLook = root.CFrame.LookVector
-
-    local sideDirection = Vector3.new(
-        -direction.Z,
-        0,
-        direction.X
-    )
-
-    local sideExtent =
-        math.abs(sideDirection:Dot(rootRight)) * root.Size.X * 0.5
-        + math.abs(sideDirection:Dot(rootLook)) * root.Size.Z * 0.5
-
-    -- Keep the forward probe close to the root center.
-    -- Do not add the full root-part forward extent.
-    local forwardOffset = self.Options.probeForwardExtra
-
-    local sideOffset = math.max(
-        0.1,
-        sideExtent * self.Options.probeSideScale
-    )
-
     local rayLength =
         humanoid.HipHeight
         + root.Size.Y * 0.5
         + self.Options.rayExtraDepth
 
+    -- The root center must still be supported.
     local centerSupported = self:_hasSupport(
         root.Position,
         rayLength
@@ -320,30 +307,15 @@ function EdgeJump:_evaluateEdge()
         return false
     end
 
-    local frontCenter =
-        root.Position + direction * forwardOffset
+    -- Check support slightly ahead of the root center.
+    local forwardPosition =
+        root.Position
+        + direction * self.Options.probeForwardExtra
 
-    local frontLeft =
-        frontCenter + sideDirection * sideOffset
-
-    local frontRight =
-        frontCenter - sideDirection * sideOffset
-
-    local supportedCount = 0
-
-    if self:_hasSupport(frontCenter, rayLength) then
-        supportedCount += 1
-    end
-
-    if self:_hasSupport(frontLeft, rayLength) then
-        supportedCount += 1
-    end
-
-    if self:_hasSupport(frontRight, rayLength) then
-        supportedCount += 1
-    end
-
-    return supportedCount <= 1
+    return not self:_hasSupport(
+        forwardPosition,
+        rayLength
+    )
 end
 
 function EdgeJump:_attemptPrimary()
@@ -355,12 +327,17 @@ function EdgeJump:_attemptPrimary()
     self._strategy = "Predictive"
     self._attemptedAt = os.clock()
 
+    -- Preserve the first edge-candidate timestamp.
+    self._edgeCandidateAt =
+        self._edgeCandidateAt or self._attemptedAt
+
     local ok, err = pcall(function()
         self._humanoid.Jump = true
     end)
 
     if not ok then
-        self._reason = "PrimaryJumpRequestFailed: " .. tostring(err)
+        self._reason =
+            "PrimaryJumpRequestFailed: " .. tostring(err)
     end
 
     return ok
@@ -375,7 +352,9 @@ function EdgeJump:_attemptFallback()
 
     self._fallbackAttempted = true
     self._strategy = "ReactiveFallback"
-    self._attemptedAt = os.clock()
+
+    -- Do not overwrite the primary attempt timestamp.
+    self._fallbackAttemptedAt = os.clock()
 
     local ok, err = pcall(function()
         self._humanoid:ChangeState(
@@ -384,21 +363,32 @@ function EdgeJump:_attemptFallback()
     end)
 
     if not ok then
-        self._reason = "FallbackJumpRequestFailed: " .. tostring(err)
+        self._reason =
+            "FallbackJumpRequestFailed: " .. tostring(err)
     end
 
     return ok
 end
 
 function EdgeJump:_onStateChanged(_, newState)
-    if not self._active or not self._attemptedAt then
+    if not self._active then
         return
     end
 
     if newState == Enum.HumanoidStateType.Jumping then
-        if os.clock() - self._attemptedAt
-            <= self.Options.fallbackConfirmWindow then
+        local now = os.clock()
 
+        local primaryRecent =
+            self._attemptedAt ~= nil
+            and now - self._attemptedAt
+                <= self.Options.fallbackConfirmWindow
+
+        local fallbackRecent =
+            self._fallbackAttemptedAt ~= nil
+            and now - self._fallbackAttemptedAt
+                <= self.Options.fallbackConfirmWindow
+
+        if primaryRecent or fallbackRecent then
             self._jumpAccepted = true
             self:_finish("Succeeded", "JumpStateAccepted")
         end
@@ -412,6 +402,7 @@ function EdgeJump:_onPreSimulation(deltaTimeSim)
 
     self._lastFrameDelta = deltaTimeSim
 
+    -- Avoid making a predictive decision on a large frame spike.
     if deltaTimeSim > self.Options.maxFrameDelta then
         return
     end
@@ -432,6 +423,7 @@ function EdgeJump:_onPreSimulation(deltaTimeSim)
     end)
 
     if ok and edgeDetected then
+        self._edgeCandidateAt = os.clock()
         self:_attemptPrimary()
     end
 end
@@ -453,20 +445,36 @@ function EdgeJump:_onHeartbeat()
     local grounded = isGrounded(humanoid, state)
     local now = os.clock()
 
-    if state == Enum.HumanoidStateType.Jumping
-        and self._attemptedAt
-        and now - self._attemptedAt
-            <= self.Options.fallbackConfirmWindow then
+    -- Confirm whether either jump request was accepted.
+    if state == Enum.HumanoidStateType.Jumping then
+        local primaryRecent =
+            self._attemptedAt ~= nil
+            and now - self._attemptedAt
+                <= self.Options.fallbackConfirmWindow
 
-        self._jumpAccepted = true
-        self:_finish("Succeeded", "JumpStateAccepted")
-        return
+        local fallbackRecent =
+            self._fallbackAttemptedAt ~= nil
+            and now - self._fallbackAttemptedAt
+                <= self.Options.fallbackConfirmWindow
+
+        if primaryRecent or fallbackRecent then
+            self._jumpAccepted = true
+            self:_finish("Succeeded", "JumpStateAccepted")
+            return
+        end
     end
 
-    -- Forum-inspired fallback:
-    -- grounded -> Freefall without an accepted primary jump.
+    -- The fallback is only armed by a recently detected edge.
+    -- It cannot trigger simply because the character walks off
+    -- an unrelated platform or ledge.
+    local candidateRecent =
+        self._edgeCandidateAt ~= nil
+        and now - self._edgeCandidateAt
+            <= self.Options.fallbackConfirmWindow
+
     if self._wasGrounded
         and state == Enum.HumanoidStateType.Freefall
+        and candidateRecent
         and not self._jumpAccepted
         and not self._fallbackAttempted then
 
@@ -475,17 +483,25 @@ function EdgeJump:_onHeartbeat()
 
     self._wasGrounded = grounded
 
+    -- Give the fallback its own confirmation window.
     if self._fallbackAttempted
-        and self._attemptedAt
-        and now - self._attemptedAt
+        and self._fallbackAttemptedAt
+        and now - self._fallbackAttemptedAt
             > self.Options.fallbackConfirmWindow then
 
-        self:_finish("Failed", "BothJumpStrategiesUnaccepted")
+        self:_finish(
+            "Failed",
+            "BothJumpStrategiesUnaccepted"
+        )
+
         return
     end
 
     if now - self._startTime > self.Options.maxDuration then
-        self:_finish("Failed", "EdgeNotReachedOrJumpUnaccepted")
+        self:_finish(
+            "Failed",
+            "EdgeNotReachedOrJumpUnaccepted"
+        )
     end
 end
 
@@ -529,8 +545,11 @@ function EdgeJump:Start(character)
         return false, "NotLocalCharacter"
     end
 
-    local humanoid = self.CharacterManager:GetHumanoid(character)
-    local root = self.CharacterManager:GetRoot(character)
+    local humanoid =
+        self.CharacterManager:GetHumanoid(character)
+
+    local root =
+        self.CharacterManager:GetRoot(character)
 
     if not humanoid or not root
         or humanoid.Health <= 0
@@ -577,11 +596,15 @@ function EdgeJump:Start(character)
     self._jumpAccepted = false
 
     self._attemptedAt = nil
+    self._edgeCandidateAt = nil
+    self._fallbackAttemptedAt = nil
+
     self._strategy = nil
     self._lastFrameDelta = 0
     self._roundTripPing = nil
 
-    -- Optional RTT telemetry. It does not delay local jump execution.
+    -- Optional RTT telemetry.
+    -- It does not delay local jump execution.
     local localPlayer = Players.LocalPlayer
 
     if localPlayer then
@@ -613,7 +636,11 @@ function EdgeJump:Start(character)
             self:_onStateChanged(oldState, newState)
         end
     ) then
-        self:_finish("Failed", "StateChangedConnectionFailed")
+        self:_finish(
+            "Failed",
+            "StateChangedConnectionFailed"
+        )
+
         return false, "StateChangedConnectionFailed"
     end
 
@@ -623,7 +650,11 @@ function EdgeJump:Start(character)
             self:_onPreSimulation(deltaTimeSim)
         end
     ) then
-        self:_finish("Failed", "PreSimulationConnectionFailed")
+        self:_finish(
+            "Failed",
+            "PreSimulationConnectionFailed"
+        )
+
         return false, "PreSimulationConnectionFailed"
     end
 
@@ -633,14 +664,22 @@ function EdgeJump:Start(character)
             self:_onHeartbeat()
         end
     ) then
-        self:_finish("Failed", "HeartbeatConnectionFailed")
+        self:_finish(
+            "Failed",
+            "HeartbeatConnectionFailed"
+        )
+
         return false, "HeartbeatConnectionFailed"
     end
 
     if not connect(humanoid.Died, function()
         self:_finish("Stopped", "CharacterDied")
     end) then
-        self:_finish("Failed", "DiedConnectionFailed")
+        self:_finish(
+            "Failed",
+            "DiedConnectionFailed"
+        )
+
         return false, "DiedConnectionFailed"
     end
 
@@ -649,7 +688,11 @@ function EdgeJump:Start(character)
             self:_finish("Stopped", "CharacterRemoved")
         end
     end) then
-        self:_finish("Failed", "AncestryConnectionFailed")
+        self:_finish(
+            "Failed",
+            "AncestryConnectionFailed"
+        )
+
         return false, "AncestryConnectionFailed"
     end
 
@@ -666,7 +709,10 @@ function EdgeJump:Stop(reason)
         return false, self._status
     end
 
-    return self:_finish("Stopped", reason or "StoppedByCaller")
+    return self:_finish(
+        "Stopped",
+        reason or "StoppedByCaller"
+    )
 end
 
 function EdgeJump:Destroy()
