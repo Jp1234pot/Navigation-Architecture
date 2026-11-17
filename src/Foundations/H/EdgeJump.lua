@@ -287,19 +287,19 @@ function EdgeJump:_evaluateEdge()
     local rootRight = root.CFrame.RightVector
     local rootLook = root.CFrame.LookVector
 
-    local sideDirection = Vector3.new(-direction.Z, 0, direction.X)
-
-    -- Approximate the projected root-part footprint.
-    local forwardExtent =
-        math.abs(direction:Dot(rootRight)) * root.Size.X * 0.5
-        + math.abs(direction:Dot(rootLook)) * root.Size.Z * 0.5
+    local sideDirection = Vector3.new(
+        -direction.Z,
+        0,
+        direction.X
+    )
 
     local sideExtent =
         math.abs(sideDirection:Dot(rootRight)) * root.Size.X * 0.5
         + math.abs(sideDirection:Dot(rootLook)) * root.Size.Z * 0.5
 
-    local forwardOffset =
-        forwardExtent + self.Options.probeForwardExtra
+    -- Keep the forward probe close to the root center.
+    -- Do not add the full root-part forward extent.
+    local forwardOffset = self.Options.probeForwardExtra
 
     local sideOffset = math.max(
         0.1,
@@ -320,9 +320,14 @@ function EdgeJump:_evaluateEdge()
         return false
     end
 
-    local frontCenter = root.Position + direction * forwardOffset
-    local frontLeft = frontCenter + sideDirection * sideOffset
-    local frontRight = frontCenter - sideDirection * sideOffset
+    local frontCenter =
+        root.Position + direction * forwardOffset
+
+    local frontLeft =
+        frontCenter + sideDirection * sideOffset
+
+    local frontRight =
+        frontCenter - sideDirection * sideOffset
 
     local supportedCount = 0
 
@@ -338,8 +343,6 @@ function EdgeJump:_evaluateEdge()
         supportedCount += 1
     end
 
-    -- Trigger when the leading support probes have mostly
-    -- lost support while the center still has support.
     return supportedCount <= 1
 end
 
