@@ -165,12 +165,25 @@ local CAPABILITY_DEFINITIONS = {
         end,
     },
 
-    EvidenceAnalysis = {
-        modules = {
-            "ConfidenceLedger",
-            "DecisionLedger",
-            "UncertaintyMap",
-        },
+    -- Foundation K capabilities are independent.
+    -- A missing store must not disable the other stores.
+
+    ConfidenceAssessment = {
+        modules = {"ConfidenceLedger"},
+        enabled = function(config)
+            return config.evidenceLedgerEnabled
+        end,
+    },
+
+    DecisionRecording = {
+        modules = {"DecisionLedger"},
+        enabled = function(config)
+            return config.evidenceLedgerEnabled
+        end,
+    },
+
+    UncertaintyTracking = {
+        modules = {"UncertaintyMap"},
         enabled = function(config)
             return config.evidenceLedgerEnabled
         end,
@@ -373,10 +386,76 @@ function NavigationCore.new(dependencies)
         _errors = errors,
 
         _status = status,
+
+        -- The Core itself initialized successfully.
+        -- Individual capability failures are represented by
+        -- the Degraded status and capability records.
         _initialized = true,
+
         _degraded = degraded,
         _destroyed = false,
     }, NavigationCore)
+end
+
+function NavigationCore:GetStatus()
+    return {
+        status = self._destroyed and "Stopped" or self._status,
+        initialized = self._initialized,
+        degraded = self._degraded,
+        destroyed = self._destroyed,
+    }
+end
+
+function NavigationCore:GetCapabilities()
+    if self._destroyed then
+        return {}, "Destroyed"
+    end
+
+    return copyRecord(self._capabilities), "OK"
+end
+
+function NavigationCore:GetModule(name)
+    if self._destroyed then
+        return nil, "Destroyed"
+    end
+
+    if type(name) ~= "string" then
+        return nil, "InvalidModuleName"
+    end
+
+    local module = self._modules[name]
+
+    if module == nil then
+        return nil, "ModuleUnavailable"
+    end
+
+    return module, "OK"
+end
+
+function NavigationCore:GetErrors()
+    return copyRecord(self._errors)
+end
+
+function NavigationCore:Destroy()
+    if self._destroyed then
+        return false, "AlreadyDestroyed"
+    end
+
+    -- Injected modules remain caller-owned.
+    self._destroyed = true
+
+    table.clear(self._modules)
+    table.clear(self._capabilities)
+    table.clear(self._errors)
+
+    self.Config = nil
+    self._status = "Stopped"
+
+    return true, "Stopped"
+end
+
+return NavigationCore
+, NavigationCore)
 end
 
 function NavigationCore:GetStatus()
