@@ -1,10 +1,10 @@
-
 -- Navigation Architecture v2.2
 -- Module: BehaviorCoordinator
 -- Behavior layer: orchestration of analysis, decisions, destinations,
 -- and route requests.
 --
 -- Responsibilities:
+--   - Build local records via LocalRecordProvider.
 --   - Request multi-threat analysis from Foundation J.
 --   - Pass analysis packets to BehaviorDecision.
 --   - Route Pursue proposals through BehaviorRouteCoordinator.
@@ -67,6 +67,15 @@ function BehaviorCoordinator.new(config, dependencies, options)
         "BehaviorCoordinator requires dependencies")
 
     assert(
+        hasMethods(dependencies.localRecordProvider, {
+            "BuildLocalRecord",
+            "GetLatest",
+            "Reset",
+        }),
+        "A compatible LocalRecordProvider is required"
+    )
+
+    assert(
         hasMethods(dependencies.multiThreatAnalysis, {
             "Analyze",
         }),
@@ -117,6 +126,9 @@ function BehaviorCoordinator.new(config, dependencies, options)
 
     return setmetatable({
         Config = config,
+
+        LocalRecordProvider =
+            dependencies.localRecordProvider,
 
         MultiThreatAnalysis =
             dependencies.multiThreatAnalysis,
@@ -177,7 +189,6 @@ function BehaviorCoordinator:GetStatus()
 end
 
 function BehaviorCoordinator:Process(
-    localRecord,
     escapeCandidates
 )
     if self._destroyed then
@@ -192,7 +203,20 @@ function BehaviorCoordinator:Process(
         return nil, "ThreatAnalysisDisabled"
     end
 
-    -- Stage 1: obtain the current multi-threat analysis packet.
+    -- Stage 1: build a fresh local observation record.
+    local recordOk, localRecord, recordReason = pcall(function()
+        return self.LocalRecordProvider:BuildLocalRecord()
+    end)
+
+    if not recordOk then
+        return nil, "LocalRecordError:" .. tostring(localRecord)
+    end
+
+    if type(localRecord) ~= "table" then
+        return nil, recordReason or "LocalRecordUnavailable"
+    end
+
+    -- Stage 2: obtain the current multi-threat analysis packet.
     local analysisOk, analysisPacket, analysisReason = pcall(function()
         return self.MultiThreatAnalysis:Analyze(localRecord)
     end)
@@ -205,7 +229,7 @@ function BehaviorCoordinator:Process(
         return nil, analysisReason or "AnalysisUnavailable"
     end
 
-    -- Stage 2: convert analysis into a behavior proposal.
+    -- Stage 3: convert analysis into a behavior proposal.
     local decisionOk, decision, decisionReason = pcall(function()
         return self.BehaviorDecision:Evaluate(analysisPacket)
     end)
@@ -246,7 +270,7 @@ function BehaviorCoordinator:Process(
         return copyRecord(result), decision.reason
     end
 
-    -- Stage 3A: Escape requires destination evaluation.
+    -- Stage 4A: Escape requires destination evaluation.
     if decision.mode == "Escape" then
         local evaluationOk, evaluation, evaluationReason =
             pcall(function()
@@ -301,7 +325,7 @@ function BehaviorCoordinator:Process(
             return copyRecord(result), result.reason
         end
 
-        -- Stage 4: submit the selected Escape destination.
+        -- Stage 5: submit the selected Escape destination.
         local accepted, requestId, routeReason =
             self.RouteCoordinator:RequestRoute(
                 decision,
@@ -324,7 +348,7 @@ function BehaviorCoordinator:Process(
         return copyRecord(result), result.reason
     end
 
-    -- Stage 3B: Pursue uses the priority candidate already selected
+    -- Stage 4B: Pursue uses the priority candidate already selected
     -- and validated by BehaviorDecision.
     if decision.mode == "Pursue" then
         local accepted, requestId, routeReason =
@@ -387,6 +411,7 @@ function BehaviorCoordinator:Reset()
 
     self._latest = nil
 
+    self.LocalRecordProvider:Reset()
     self.BehaviorDecision:Reset()
     self.EscapeDestinationEvaluator:Reset()
 
@@ -402,6 +427,7 @@ function BehaviorCoordinator:Destroy()
     self._latest = nil
 
     self.Config = nil
+    self.LocalRecordProvider = nil
     self.MultiThreatAnalysis = nil
     self.BehaviorDecision = nil
     self.EscapeDestinationEvaluator = nil
