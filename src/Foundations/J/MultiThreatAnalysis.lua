@@ -1,3 +1,4 @@
+
 -- Navigation Architecture v2.2
 -- Foundation J: MultiThreatAnalysis
 -- Client-only, read-only, bounded proximity and trajectory assessment.
@@ -60,27 +61,76 @@ local function snapshotConfig(config)
 	return table.freeze(values)
 end
 
-local function getFreshVelocity(estimate, model, snapshotTimestamp, maxAge)
-	if type(estimate) == "table" and estimate.model == model and isFiniteVector3(estimate.velocity) and isFiniteNumber(estimate.timestamp) and isFiniteNumber(snapshotTimestamp) then
-		local age = snapshotTimestamp - estimate.timestamp
-		if age >= 0 and age <= maxAge then
-			return estimate.velocity
+-- An estimate must belong to the expected model, precede its snapshot,
+-- and remain fresh relative to the current local clock.
+local function getFreshVelocity(estimate, model, snapshotTimestamp, now, maxAge)
+	if type(estimate) == "table"
+		and estimate.model == model
+		and isFiniteVector3(estimate.velocity)
+		and isFiniteNumber(estimate.timestamp)
+		and isFiniteNumber(snapshotTimestamp)
+		and isFiniteNumber(now) then
+
+		local estimateToSnapshotAge = snapshotTimestamp - estimate.timestamp
+		local estimateToNowAge = now - estimate.timestamp
+
+		if estimateToSnapshotAge >= 0
+			and estimateToNowAge >= 0
+			and estimateToNowAge <= maxAge then
+			return estimate.velocity, estimate.timestamp
 		end
 	end
-	return nil
+
+	return nil, nil
 end
 
-local function assessContact(localPosition, localVelocity, localTimestamp, candidate, snapshot, estimate, config)
-	if type(candidate) == "table" and isModel(candidate.model) and (candidate.kind == "Player" or candidate.kind == "NPC") then
-		if type(snapshot) == "table" and snapshot.model == candidate.model and isFiniteVector3(snapshot.position) and isFiniteNumber(snapshot.timestamp) then
-			local snapshotAge = snapshot.timestamp - localTimestamp
+local function assessContact(
+	localPosition,
+	localVelocity,
+	localVelocityTimestamp,
+	candidate,
+	snapshot,
+	estimate,
+	config,
+	now
+)
+	if type(candidate) == "table"
+		and isModel(candidate.model)
+		and (candidate.kind == "Player" or candidate.kind == "NPC") then
+
+		if type(snapshot) == "table"
+			and snapshot.model == candidate.model
+			and isFiniteVector3(snapshot.position)
+			and isFiniteNumber(snapshot.timestamp) then
+
+			local snapshotAge = now - snapshot.timestamp
+
 			if snapshotAge >= 0 and snapshotAge <= config.threatMaxEstimateAge then
 				local offset = snapshot.position - localPosition
 				local distance = offset.Magnitude
 
 				if isFiniteNumber(distance) then
-					local candidateVelocity = getFreshVelocity(estimate, candidate.model, snapshot.timestamp, config.threatMaxEstimateAge)
-					local hasRelativeVelocity = localVelocity ~= nil and candidateVelocity ~= nil
+					local candidateVelocity, candidateVelocityTimestamp = getFreshVelocity(
+						estimate,
+						candidate.model,
+						snapshot.timestamp,
+						now,
+						config.threatMaxEstimateAge
+					)
+
+					-- Relative velocity is meaningful only when both estimates
+					-- are available and were sampled sufficiently close together.
+					local estimateSkew = nil
+					if localVelocityTimestamp and candidateVelocityTimestamp then
+						estimateSkew = math.abs(candidateVelocityTimestamp - localVelocityTimestamp)
+					end
+
+					local hasRelativeVelocity =
+						localVelocity ~= nil
+						and candidateVelocity ~= nil
+						and estimateSkew ~= nil
+						and estimateSkew <= config.threatAnalysisMinInterval
+
 					local closingSpeed = nil
 					local timeToClosestApproach = nil
 					local predictedClosestDistance = nil
@@ -96,7 +146,10 @@ local function assessContact(localPosition, localVelocity, localTimestamp, candi
 							end
 
 							local time = -offset:Dot(relativeVelocity) / relativeSpeedSquared
-							if isFiniteNumber(time) and time > 0 and time <= config.threatPredictionHorizon then
+							if isFiniteNumber(time)
+								and time > 0
+								and time <= config.threatPredictionHorizon then
+
 								local closestOffset = offset + relativeVelocity * time
 								local closestDistance = closestOffset.Magnitude
 
@@ -110,27 +163,45 @@ local function assessContact(localPosition, localVelocity, localTimestamp, candi
 						end
 					end
 
-					local proximityScore = clamp(1 - (distance / config.threatNearDistance), 0, 1) * 60
+					local proximityScore = clamp(
+						1 - (distance / config.threatNearDistance),
+						0,
+						1
+					) * 60
+
 					local approachScore = 0
 					if closingSpeed and closingSpeed > 0 then
-						approachScore = clamp(closingSpeed / config.threatMaxApproachSpeed, 0, 1) * 25
+						approachScore = clamp(
+							closingSpeed / config.threatMaxApproachSpeed,
+							0,
+							1
+						) * 25
 					end
 
 					local trajectoryScore = 0
 					if predictedClosestDistance then
-						trajectoryScore = clamp(1 - (predictedClosestDistance / config.threatNearDistance), 0, 1) * 15
+						trajectoryScore = clamp(
+							1 - (predictedClosestDistance / config.threatNearDistance),
+							0,
+							1
+						) * 15
 					end
 
-					local score = math.floor(clamp(proximityScore + approachScore + trajectoryScore, 0, 100) + 0.5)
+					local score = math.floor(
+						clamp(proximityScore + approachScore + trajectoryScore, 0, 100) + 0.5
+					)
+
 					local assessment
 
 					if distance <= config.threatCriticalDistance then
 						assessment = "CriticalProximity"
-					elseif predictedClosestDistance ~= nil and predictedClosestDistance <= config.threatCriticalDistance then
+					elseif predictedClosestDistance ~= nil
+						and predictedClosestDistance <= config.threatCriticalDistance then
 						assessment = "PredictedCriticalPass"
 					elseif distance <= config.threatNearDistance then
 						assessment = "ElevatedProximity"
-					elseif predictedClosestDistance ~= nil and predictedClosestDistance <= config.threatNearDistance then
+					elseif predictedClosestDistance ~= nil
+						and predictedClosestDistance <= config.threatNearDistance then
 						assessment = "PredictedNearPass"
 					elseif closingSpeed ~= nil and closingSpeed >= 2 then
 						assessment = "Approaching"
@@ -156,12 +227,13 @@ local function assessContact(localPosition, localVelocity, localTimestamp, candi
 					return nil, "InvalidDistance"
 				end
 			else
-				return nil, "SnapshotSkewTooLarge"
+				return nil, "SnapshotStale"
 			end
 		else
 			return nil, "InvalidSnapshot"
 		end
 	end
+
 	return nil, "InvalidCandidate"
 end
 
@@ -238,7 +310,12 @@ function MultiThreatAnalysis:_observeCandidate(candidate, mode)
 			return self.PhysicsObserver:ObservePosition(candidate.model)
 		end)
 
-		if snapshotOk and type(snapshot) == "table" and snapshot.model == candidate.model and isFiniteVector3(snapshot.position) and isFiniteNumber(snapshot.timestamp) then
+		if snapshotOk
+			and type(snapshot) == "table"
+			and snapshot.model == candidate.model
+			and isFiniteVector3(snapshot.position)
+			and isFiniteNumber(snapshot.timestamp) then
+
 			local estimateOk, estimate = pcall(function()
 				return self.VelocityEstimator:Update(snapshot)
 			end)
@@ -264,26 +341,40 @@ function MultiThreatAnalysis:_observeCandidate(candidate, mode)
 			return nil, "InvalidCandidateSnapshot"
 		end
 	end
+
 	return nil, "CandidateUnavailable"
 end
 
 function MultiThreatAnalysis:Analyze(localRecord)
 	if not self._destroyed then
 		local config = self.Config
+
 		if config.multiThreatAnalysisEnabled == true then
 			local localSnapshot = type(localRecord) == "table" and localRecord.snapshot or nil
-			if type(localSnapshot) == "table" and isModel(localSnapshot.model) and isFiniteVector3(localSnapshot.position) and isFiniteNumber(localSnapshot.timestamp) and localRecord.model == localSnapshot.model then
+
+			if type(localSnapshot) == "table"
+				and isModel(localSnapshot.model)
+				and isFiniteVector3(localSnapshot.position)
+				and isFiniteNumber(localSnapshot.timestamp)
+				and localRecord.model == localSnapshot.model then
+
 				local now = os.clock()
 				local localSnapshotAge = now - localSnapshot.timestamp
 
-				if isFiniteNumber(localSnapshotAge) and localSnapshotAge >= 0 and localSnapshotAge <= config.threatMaxEstimateAge then
-					if not self._lastAnalysisAt or now - self._lastAnalysisAt >= config.threatAnalysisMinInterval then
+				if isFiniteNumber(localSnapshotAge)
+					and localSnapshotAge >= 0
+					and localSnapshotAge <= config.threatMaxEstimateAge then
+
+					if not self._lastAnalysisAt
+						or now - self._lastAnalysisAt >= config.threatAnalysisMinInterval then
+
 						self._lastAnalysisAt = now
 
-						local localVelocity = getFreshVelocity(
+						local localVelocity, localVelocityTimestamp = getFreshVelocity(
 							type(localRecord) == "table" and localRecord.estimate or nil,
 							localSnapshot.model,
 							localSnapshot.timestamp,
+							now,
 							config.threatMaxEstimateAge
 						)
 
@@ -291,7 +382,12 @@ function MultiThreatAnalysis:Analyze(localRecord)
 						local startIndex = self._nextStartIndex[mode] or 1
 
 						local discoveryOk, candidates, discoveryStatus, inspectedCount, sourceCount, rotationWindowCount = pcall(function()
-							return self.TargetDiscovery:GetCandidates(mode, localSnapshot.position, config.maxThreatCandidates, startIndex)
+							return self.TargetDiscovery:GetCandidates(
+								mode,
+								localSnapshot.position,
+								config.maxThreatCandidates,
+								startIndex
+							)
 						end)
 
 						if discoveryOk then
@@ -300,16 +396,29 @@ function MultiThreatAnalysis:Analyze(localRecord)
 								sourceCount = sourceCount or inspectedCount
 								rotationWindowCount = rotationWindowCount or sourceCount
 
-								if isFiniteNumber(inspectedCount) and isFiniteNumber(sourceCount) and isFiniteNumber(rotationWindowCount) and inspectedCount >= 0 and sourceCount >= 0 and rotationWindowCount >= 0 then
+								if isFiniteNumber(inspectedCount)
+									and isFiniteNumber(sourceCount)
+									and isFiniteNumber(rotationWindowCount)
+									and inspectedCount >= 0
+									and sourceCount >= 0
+									and rotationWindowCount >= 0 then
+
 									inspectedCount = math.floor(inspectedCount)
 									sourceCount = math.floor(sourceCount)
 									rotationWindowCount = math.floor(rotationWindowCount)
 
-									if inspectedCount <= config.maxThreatCandidates and inspectedCount <= sourceCount and rotationWindowCount <= sourceCount then
+									if inspectedCount <= config.maxThreatCandidates
+										and inspectedCount <= sourceCount
+										and rotationWindowCount <= sourceCount then
+
 										local candidateCount = #candidates
-										if candidateCount <= config.maxThreatCandidates and candidateCount <= inspectedCount then
+
+										if candidateCount <= config.maxThreatCandidates
+											and candidateCount <= inspectedCount then
+
 											if rotationWindowCount > 0 then
-												self._nextStartIndex[mode] = ((startIndex - 1 + math.max(inspectedCount, 1)) % rotationWindowCount) + 1
+												self._nextStartIndex[mode] =
+													((startIndex - 1 + math.max(inspectedCount, 1)) % rotationWindowCount) + 1
 											else
 												self._nextStartIndex[mode] = 1
 											end
@@ -331,16 +440,20 @@ function MultiThreatAnalysis:Analyze(localRecord)
 													local result = assessContact(
 														localSnapshot.position,
 														localVelocity,
-														localSnapshot.timestamp,
+														localVelocityTimestamp,
 														candidate,
 														observation.snapshot,
 														observation.estimate,
-														config
+														config,
+														now
 													)
 
 													if result then
 														results[#results + 1] = result
-														nearestDistance = nearestDistance and math.min(nearestDistance, result.distance) or result.distance
+														nearestDistance =
+															nearestDistance
+															and math.min(nearestDistance, result.distance)
+															or result.distance
 													else
 														rejectedCount += 1
 														self:_resetEstimate(candidate.model)
@@ -361,7 +474,10 @@ function MultiThreatAnalysis:Analyze(localRecord)
 											end)
 
 											local analyzedCount = #results
-											local returnedCount = math.min(analyzedCount, config.maxThreatResults)
+											local returnedCount = math.min(
+												analyzedCount,
+												config.maxThreatResults
+											)
 
 											for index = analyzedCount, returnedCount + 1, -1 do
 												results[index] = nil
@@ -416,6 +532,7 @@ function MultiThreatAnalysis:Analyze(localRecord)
 			return nil, "Disabled"
 		end
 	end
+
 	return nil, "Destroyed"
 end
 
