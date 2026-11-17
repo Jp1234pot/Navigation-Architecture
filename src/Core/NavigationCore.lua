@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Module: NavigationCore
 -- Shared coordination layer for injected A-K foundation modules.
@@ -74,6 +73,18 @@ local MODULE_INTERFACES = {
     },
     UncertaintyMap = {
         "Observe", "GetAt", "GetCells", "GetSummary", "Reset", "Destroy",
+    },
+    BehaviorDecision = {
+        "Evaluate", "SetMode", "GetLatest", "Reset", "Destroy",
+    },
+    EscapeDestinationEvaluator = {
+        "Evaluate", "GetLatest", "Reset", "Destroy",
+    },
+    BehaviorRouteCoordinator = {
+        "RequestRoute", "AcceptPathResult", "UpdateProgress", "Cancel", "GetStatus", "Destroy",
+    },
+    BehaviorCoordinator = {
+        "Process", "SetMode", "GetLatest", "GetStatus", "AcceptPathResult", "UpdateProgress", "Cancel", "Reset", "Destroy",
     },
 }
 
@@ -174,6 +185,55 @@ local CAPABILITY_DEFINITIONS = {
         },
         enabled = function(config)
             return config.multiThreatAnalysisEnabled
+        end,
+    },
+
+    BehaviorDecision = {
+        modules = {
+            "MultiThreatAnalysis",
+            "BehaviorDecision",
+        },
+        enabled = function(config)
+            return config.multiThreatAnalysisEnabled
+        end,
+    },
+
+    EscapeDestinationEvaluation = {
+        modules = {
+            "CharacterManager",
+            "BehaviorDecision",
+            "EscapeDestinationEvaluator",
+        },
+        enabled = function(config)
+            return config.multiThreatAnalysisEnabled
+        end,
+    },
+
+    BehaviorRouteCoordination = {
+        modules = {
+            "CharacterManager",
+            "PathfindingEngine",
+            "WaypointTracker",
+            "BehaviorRouteCoordinator",
+        },
+        enabled = function(config)
+            return config.pathfindingEnabled
+        end,
+    },
+
+    BehaviorCoordination = {
+        modules = {
+            "CharacterManager",
+            "PathfindingEngine",
+            "WaypointTracker",
+            "MultiThreatAnalysis",
+            "BehaviorDecision",
+            "EscapeDestinationEvaluator",
+            "BehaviorRouteCoordinator",
+            "BehaviorCoordinator",
+        },
+        enabled = function(config)
+            return config.enabled and config.multiThreatAnalysisEnabled and config.pathfindingEnabled
         end,
     },
 
