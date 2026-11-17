@@ -12,7 +12,10 @@ local function isFiniteNumber(value)
 end
 
 local function isFiniteVector3(value)
-	return typeof(value) == "Vector3" and isFiniteNumber(value.X) and isFiniteNumber(value.Y) and isFiniteNumber(value.Z)
+	return typeof(value) == "Vector3"
+		and isFiniteNumber(value.X)
+		and isFiniteNumber(value.Y)
+		and isFiniteNumber(value.Z)
 end
 
 local function isModel(value)
@@ -57,7 +60,6 @@ local function snapshotConfig(config)
 		threatCriticalDistance = config.threatCriticalDistance,
 		threatMaxApproachSpeed = config.threatMaxApproachSpeed,
 	}
-
 	return table.freeze(values)
 end
 
@@ -80,7 +82,6 @@ local function getFreshVelocity(estimate, model, snapshotTimestamp, now, maxAge)
 			return estimate.velocity, estimate.timestamp
 		end
 	end
-
 	return nil, nil
 end
 
@@ -233,7 +234,6 @@ local function assessContact(
 			return nil, "InvalidSnapshot"
 		end
 	end
-
 	return nil, "InvalidCandidate"
 end
 
@@ -370,14 +370,6 @@ function MultiThreatAnalysis:Analyze(localRecord)
 
 						self._lastAnalysisAt = now
 
-						local localVelocity, localVelocityTimestamp = getFreshVelocity(
-							type(localRecord) == "table" and localRecord.estimate or nil,
-							localSnapshot.model,
-							localSnapshot.timestamp,
-							now,
-							config.threatMaxEstimateAge
-						)
-
 						local mode = config.targetMode
 						local startIndex = self._nextStartIndex[mode] or 1
 
@@ -423,6 +415,17 @@ function MultiThreatAnalysis:Analyze(localRecord)
 												self._nextStartIndex[mode] = 1
 											end
 
+											-- Discovery may take time. Revalidate the local
+											-- snapshot before starting candidate assessment.
+											local discoveryNow = os.clock()
+											local localAgeAtDiscovery = discoveryNow - localSnapshot.timestamp
+
+											if not isFiniteNumber(localAgeAtDiscovery)
+												or localAgeAtDiscovery < 0
+												or localAgeAtDiscovery > config.threatMaxEstimateAge then
+												return nil, "LocalSnapshotStale"
+											end
+
 											local results = {}
 											local rejectedCount = 0
 											local nearestDistance = nil
@@ -437,6 +440,30 @@ function MultiThreatAnalysis:Analyze(localRecord)
 												end
 
 												if observation then
+													-- ObservePosition() and the estimator run before
+													-- this clock read. Candidate timestamps therefore
+													-- cannot appear future-dated merely because the
+													-- analysis clock was captured before observation.
+													local assessmentNow = os.clock()
+													local localAgeAtAssessment =
+														assessmentNow - localSnapshot.timestamp
+
+													if not isFiniteNumber(localAgeAtAssessment)
+														or localAgeAtAssessment < 0
+														or localAgeAtAssessment > config.threatMaxEstimateAge then
+														return nil, "LocalSnapshotStale"
+													end
+
+													-- Revalidate local velocity against the same
+													-- post-observation clock used for this candidate.
+													local localVelocity, localVelocityTimestamp = getFreshVelocity(
+														type(localRecord) == "table" and localRecord.estimate or nil,
+														localSnapshot.model,
+														localSnapshot.timestamp,
+														assessmentNow,
+														config.threatMaxEstimateAge
+													)
+
 													local result = assessContact(
 														localSnapshot.position,
 														localVelocity,
@@ -445,7 +472,7 @@ function MultiThreatAnalysis:Analyze(localRecord)
 														observation.snapshot,
 														observation.estimate,
 														config,
-														now
+														assessmentNow
 													)
 
 													if result then
