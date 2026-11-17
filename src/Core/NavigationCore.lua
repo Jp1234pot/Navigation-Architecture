@@ -9,6 +9,7 @@
 --   - Track initialization and validation errors.
 --   - Provide controlled public module access.
 --   - Preserve caller ownership of injected modules.
+--   - Isolate Core configuration from caller mutation.
 --
 -- This module does not construct, start, stop, or destroy injected modules.
 
@@ -74,6 +75,17 @@ local MODULE_INTERFACES = {
     UncertaintyMap = {
         "Observe", "GetAt", "GetCells", "GetSummary", "Reset", "Destroy",
     },
+}
+
+-- These are the only configuration fields consumed by NavigationCore.
+local CORE_CONFIG_KEYS = {
+    "enabled",
+    "pathfindingEnabled",
+    "movementEnabled",
+    "adaptiveRepathEnabled",
+    "multiThreatAnalysisEnabled",
+    "evidenceLedgerEnabled",
+    "telemetryPanelEnabled",
 }
 
 local CAPABILITY_DEFINITIONS = {
@@ -165,8 +177,6 @@ local CAPABILITY_DEFINITIONS = {
         end,
     },
 
-    -- Foundation K capabilities are independent.
-
     ConfidenceAssessment = {
         modules = {"ConfidenceLedger"},
         enabled = function(config)
@@ -208,17 +218,7 @@ local function validateConfig(config)
         return false, "ConfigMustBeTable"
     end
 
-    local booleanKeys = {
-        "enabled",
-        "pathfindingEnabled",
-        "movementEnabled",
-        "adaptiveRepathEnabled",
-        "multiThreatAnalysisEnabled",
-        "evidenceLedgerEnabled",
-        "telemetryPanelEnabled",
-    }
-
-    for _, key in ipairs(booleanKeys) do
+    for _, key in ipairs(CORE_CONFIG_KEYS) do
         local ok, value = pcall(function()
             return config[key]
         end)
@@ -229,6 +229,17 @@ local function validateConfig(config)
     end
 
     return true, "OK"
+end
+
+local function createConfigSnapshot(config)
+    local snapshot = {}
+
+    for _, key in ipairs(CORE_CONFIG_KEYS) do
+        snapshot[key] = config[key]
+    end
+
+    -- Core configuration is immutable after construction.
+    return table.freeze(snapshot)
 end
 
 local function validateModule(name, module)
@@ -275,7 +286,7 @@ local function validateModules(modules)
             errors[#errors + 1] = {
                 module = tostring(name),
                 capability = "Core",
-                stage = "Validation",
+                stage = "ModuleValidation",
                 reason = "UnknownModule",
             }
         else
@@ -287,7 +298,7 @@ local function validateModules(modules)
                 errors[#errors + 1] = {
                     module = name,
                     capability = "Core",
-                    stage = "Validation",
+                    stage = "ModuleValidation",
                     reason = reason,
                 }
             end
@@ -359,24 +370,43 @@ function NavigationCore.new(dependencies)
 
     assert(configValid, configReason)
 
+    -- Snapshot only the fields consumed by Core.
+    -- Later caller-side mutations cannot alter Core capability decisions.
+    local configSnapshot = createConfigSnapshot(config)
+
     local suppliedModules = dependencies.modules
+
     if suppliedModules == nil then
         suppliedModules = {}
     end
 
-    local validModules, errors = validateModules(suppliedModules)
-    local capabilities = buildCapabilities(config, validModules)
+    local validModules, moduleErrors = validateModules(suppliedModules)
+
+    local capabilities = buildCapabilities(
+        configSnapshot,
+        validModules
+    )
+
     local capabilityErrors = buildCapabilityErrors(capabilities)
+
+    local errors = {}
+
+    for _, err in ipairs(moduleErrors) do
+        errors[#errors + 1] = err
+    end
 
     for _, err in ipairs(capabilityErrors) do
         errors[#errors + 1] = err
     end
 
-    local degraded = #errors > 0
+    -- Only missing dependencies of enabled capabilities degrade Core.
+    -- Unrelated invalid or unknown modules remain visible in GetErrors()
+    -- without disabling otherwise usable capabilities.
+    local degraded = #capabilityErrors > 0
     local status = degraded and "Degraded" or "Ready"
 
     return setmetatable({
-        Config = config,
+        Config = configSnapshot,
 
         _modules = validModules,
         _capabilities = capabilities,
