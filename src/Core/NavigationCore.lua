@@ -86,6 +86,9 @@ local MODULE_INTERFACES = {
     BehaviorCoordinator = {
         "Process", "SetMode", "GetLatest", "GetStatus", "AcceptPathResult", "UpdateProgress", "Cancel", "Reset", "Destroy",
     },
+    LocalRecordProvider = {
+        "BuildLocalRecord", "GetLatest", "Reset", "Destroy",
+    },
 }
 
 -- These are the only configuration fields consumed by NavigationCore.
@@ -255,6 +258,18 @@ local CAPABILITY_DEFINITIONS = {
         modules = {"UncertaintyMap"},
         enabled = function(config)
             return config.evidenceLedgerEnabled
+        end,
+    },
+
+    LocalObservationRecord = {
+        modules = {
+            "CharacterManager",
+            "PhysicsObserver",
+            "VelocityEstimator",
+            "LocalRecordProvider",
+        },
+        enabled = function(config)
+            return config.multiThreatAnalysisEnabled
         end,
     },
 }
