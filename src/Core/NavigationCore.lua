@@ -89,6 +89,18 @@ local MODULE_INTERFACES = {
     BehaviorCoordinator = {
         "Process", "SetMode", "GetLatest", "GetStatus", "AcceptPathResult", "UpdateProgress", "Cancel", "Reset", "Destroy",
     },
+    BehaviorComposition = {
+        "SetMode",
+        "GetMode",
+        "ProcessOnce",
+        "AcceptPathResult",
+        "UpdateProgress",
+        "GetLatest",
+        "GetStatus",
+        "Cancel",
+        "Reset",
+        "Destroy",
+    },
 }
 
 -- These are the only configuration fields consumed by NavigationCore.
@@ -235,9 +247,12 @@ local CAPABILITY_DEFINITIONS = {
             "EscapeDestinationEvaluator",
             "BehaviorRouteCoordinator",
             "BehaviorCoordinator",
+            "BehaviorComposition",
         },
         enabled = function(config)
-            return config.enabled and config.multiThreatAnalysisEnabled and config.pathfindingEnabled
+            return config.enabled
+                and config.multiThreatAnalysisEnabled
+                and config.pathfindingEnabled
         end,
     },
 
