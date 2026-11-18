@@ -13,6 +13,7 @@ local DEFAULTS = {
         obstructionHeights = { 1.5, 3.5 },
         surfaceStartHeight = 6,
         surfaceDepth = 24,
+        filterInstances = {},
     },
     reachability = {
         maxSnapshotAge = 5,
@@ -77,7 +78,14 @@ local function mergeKnown(target, source, path)
             if type(value) ~= "table" then
                 error(path .. "." .. tostring(key) .. " must be a table", 2)
             end
-            mergeKnown(current, value, path .. "." .. tostring(key))
+
+            -- Empty table defaults can represent caller-supplied arrays,
+            -- such as observer.filterInstances.
+            if next(current) == nil then
+                rawset(target, key, cloneValue(value))
+            else
+                mergeKnown(current, value, path .. "." .. tostring(key))
+            end
         else
             if type(value) ~= type(current) then
                 error(path .. "." .. tostring(key) .. " must be " .. type(current), 2)
