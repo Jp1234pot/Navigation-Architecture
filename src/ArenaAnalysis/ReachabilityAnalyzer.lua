@@ -203,6 +203,7 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
     local unobservedSectorCount = 0
     local blockedSectorCount = 0
     local unverifiedConnectionSectorCount = 0
+    local uncertainSectorCount = 0
 
     centerSurface = addSurface(surfaces, snapshot.centerSurface, {
         label = "Center",
@@ -219,6 +220,7 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
         if type(sector) ~= "table" then
             unobservedSectorCount += 1
             unverifiedConnectionSectorCount += 1
+            uncertainSectorCount += 1
             continue
         end
 
@@ -228,7 +230,8 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
         end
 
         local sectorSurface = nil
-        if isUsableSurface(sector.surface) then
+        local surfaceObserved = isUsableSurface(sector.surface)
+        if surfaceObserved then
             sectorSurface = addSurface(surfaces, sector.surface, {
                 label = "Sector" .. tostring(index),
                 sectorIndex = index,
@@ -236,6 +239,12 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
             })
         else
             unobservedSectorCount += 1
+        end
+
+        -- Count each uncertain sector only once, even when multiple
+        -- observation deficiencies apply to the same sector.
+        if not surfaceObserved or sector.obstructionObserved ~= true then
+            uncertainSectorCount += 1
         end
 
         if not isSectorPathClear(sector) then
@@ -303,6 +312,7 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
         unobservedSectorCount = unobservedSectorCount,
         blockedSectorCount = blockedSectorCount,
         unverifiedConnectionSectorCount = unverifiedConnectionSectorCount,
+        uncertainSectorCount = uncertainSectorCount,
         analysisNumber = self._analysisCount,
         limits = {
             isHeuristic = true,
