@@ -33,7 +33,7 @@ local function validateOptions(options)
     local result = {
         maxReportAge = options.maxReportAge or 5,
         maxSurfaces = options.maxSurfaces or 17,
-        maxConnections = options.maxConnections or 136,
+        maxConnections = options.maxConnections or 16,
         maxRoutes = options.maxRoutes or 3,
         verticalWeight = options.verticalWeight or 1.25,
         uncertaintyPenalty = options.uncertaintyPenalty or 8,
@@ -50,8 +50,8 @@ local function validateOptions(options)
         and result.maxSurfaces >= 1 and result.maxSurfaces <= 17,
         "maxSurfaces must be an integer from 1 to 17")
     assert(isFiniteNumber(result.maxConnections) and result.maxConnections % 1 == 0
-        and result.maxConnections >= 0 and result.maxConnections <= 136,
-        "maxConnections must be an integer from 0 to 136")
+        and result.maxConnections >= 0 and result.maxConnections <= 16,
+        "maxConnections must be an integer from 0 to 16")
     assert(isFiniteNumber(result.maxRoutes) and result.maxRoutes % 1 == 0
         and result.maxRoutes >= 1 and result.maxRoutes <= 4,
         "maxRoutes must be an integer from 1 to 4")
