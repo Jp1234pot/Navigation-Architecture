@@ -73,7 +73,6 @@ local function isUsableSurface(hit)
         and isFiniteVector3(hit.normal)
 end
 
--- Added helper function below isUsableSurface
 local function isSectorPathClear(sector)
     return type(sector) == "table"
         and sector.obstructionObserved == true
@@ -81,7 +80,6 @@ local function isSectorPathClear(sector)
         and sector.obstructionHighBlocked == false
 end
 
--- Modified addSurface to return existing or newly created surface
 local function addSurface(surfaces, hit, source)
     if not isUsableSurface(hit) then
         return nil
@@ -232,7 +230,7 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
         local sectorSurface = nil
         if isUsableSurface(sector.surface) then
             sectorSurface = addSurface(surfaces, sector.surface, {
-                label = "Sector" .. tostring(index),
+                label = "Sector" + tostring(index),
                 sectorIndex = index,
                 dedupeDistance = options.dedupeDistance,
             })
