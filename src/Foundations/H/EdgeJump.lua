@@ -574,8 +574,7 @@ function EdgeJump:Start(character)
     end
 
     local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {character}
+params.ExcludeInstances = {character}
 
     pcall(function()
         params.RespectCanCollide = true
