@@ -43,15 +43,100 @@ local BehaviorComposition = require(script.Parent.Parent.Behavior.BehaviorCompos
 local ClientInitializer = {}
 ClientInitializer.__index = ClientInitializer
 
+local OPTIONAL_CAPABILITIES = {
+    StateManager = {},
+
+    SamplingCoordinator = {
+        "CoordinatedSampling",
+    },
+
+    TelemetryPanel = {
+        "TelemetryPresentation",
+    },
+
+    MovementController = {
+        "LocalMovement",
+    },
+
+    RecoveryAnalysis = {
+        "RecoveryAnalysis",
+    },
+
+    AdaptiveRepath = {
+        "AdaptiveRepath",
+    },
+
+    ConfidenceLedger = {
+        "ConfidenceAssessment",
+    },
+
+    DecisionLedger = {
+        "DecisionRecording",
+    },
+
+    UncertaintyMap = {
+        "UncertaintyTracking",
+    },
+}
+
 local function safeDestroy(instance)
-    if type(instance) ~= "table"
-        or type(instance.Destroy) ~= "function" then
-        return
+    if type(instance) ~= "table" then
+        return false
     end
 
-    pcall(function()
-        instance:Destroy()
+    local lookupOk, destroyMethod = pcall(function()
+        return instance.Destroy
     end)
+
+    if not lookupOk or type(destroyMethod) ~= "function" then
+        return false
+    end
+
+    local destroyOk = pcall(destroyMethod, instance)
+    return destroyOk
+end
+
+local function getCallable(module, methodName)
+    if type(module) ~= "table" then
+        return nil
+    end
+
+    local ok, method = pcall(function()
+        return module[methodName]
+    end)
+
+    if not ok or type(method) ~= "function" then
+        return nil
+    end
+
+    return method
+end
+
+local function stringifyReason(reason)
+    local ok, message = pcall(tostring, reason)
+
+    if ok then
+        return message
+    end
+
+    return "UnknownError"
+end
+
+local function copyInitializationErrors(source)
+    local result = {}
+
+    for _, record in ipairs(source or {}) do
+        result[#result + 1] = {
+            module = record.module,
+            stage = record.stage,
+            reason = record.reason,
+            affectedCapabilities = table.clone(
+                record.affectedCapabilities or {}
+            ),
+        }
+    end
+
+    return result
 end
 
 local function validateOptions(options)
@@ -98,36 +183,127 @@ function ClientInitializer.new(options)
         configOverrides.telemetryPanelEnabled = false
     end
 
+    -- Required infrastructure.
     local config = Config.Create(configOverrides)
-
-    -- LifecycleManager owns the constructed modules.
-    -- Cleanup callbacks execute in reverse registration order.
     local lifecycle = LifecycleManager.new()
 
-    local function construct(factory)
+    local initializationErrors = {}
+
+    local function recordOptionalFailure(
+        moduleName,
+        stage,
+        reason
+    )
+        initializationErrors[#initializationErrors + 1] = {
+            module = moduleName,
+            stage = stage,
+            reason = stringifyReason(reason),
+            affectedCapabilities = table.clone(
+                OPTIONAL_CAPABILITIES[moduleName] or {}
+            ),
+        }
+    end
+
+    -- Every successfully constructed module that owns a Destroy
+    -- method is registered with the shared lifecycle manager.
+    local function registerCleanup(instance)
+        local lookupOk, destroyMethod = pcall(function()
+            return instance.Destroy
+        end)
+
+        if not lookupOk then
+            return false, "DestroyMethodLookupFailed"
+        end
+
+        -- Some modules own no external resources.
+        if type(destroyMethod) ~= "function" then
+            return true, "NoCleanupRequired"
+        end
+
+        local registered = lifecycle:AddCleanup(function()
+            safeDestroy(instance)
+        end)
+
+        if not registered then
+            safeDestroy(instance)
+            return false, "CleanupRegistrationFailed"
+        end
+
+        return true, "Registered"
+    end
+
+    -- Required constructors stop initialization on failure.
+    local function constructRequired(moduleName, factory)
         local ok, instance = pcall(factory)
 
         if not ok then
-            lifecycle:Destroy()
-            error(instance, 2)
+            error(
+                string.format(
+                    "[%s] ConstructionFailed: %s",
+                    moduleName,
+                    stringifyReason(instance)
+                ),
+                2
+            )
         end
 
-        assert(
-            type(instance) == "table",
-            "Constructed module must return a table"
-        )
+        if type(instance) ~= "table" then
+            error(
+                string.format(
+                    "[%s] InvalidConstructorResult",
+                    moduleName
+                ),
+                2
+            )
+        end
 
-        -- Some modules own no resources and have no Destroy method.
-        if type(instance.Destroy) == "function" then
-            local registered = lifecycle:AddCleanup(function()
-                safeDestroy(instance)
-            end)
+        local registered, reason = registerCleanup(instance)
 
-            if not registered then
-                safeDestroy(instance)
-                lifecycle:Destroy()
-                error("Could not register module cleanup", 2)
-            end
+        if not registered then
+            error(
+                string.format(
+                    "[%s] %s",
+                    moduleName,
+                    tostring(reason)
+                ),
+                2
+            )
+        end
+
+        return instance
+    end
+
+    -- Optional constructors fail independently.
+    local function constructOptional(moduleName, factory)
+        local ok, instance = pcall(factory)
+
+        if not ok then
+            recordOptionalFailure(
+                moduleName,
+                "Construction",
+                instance
+            )
+            return nil
+        end
+
+        if type(instance) ~= "table" then
+            recordOptionalFailure(
+                moduleName,
+                "Validation",
+                "InvalidConstructorResult"
+            )
+            return nil
+        end
+
+        local registered, reason = registerCleanup(instance)
+
+        if not registered then
+            recordOptionalFailure(
+                moduleName,
+                "CleanupRegistration",
+                reason
+            )
+            return nil
         end
 
         return instance
@@ -135,102 +311,155 @@ function ClientInitializer.new(options)
 
     local ok, result = pcall(function()
         -- FOUNDATION A
-        local stateManager = construct(function()
-            return StateManager.new()
-        end)
+        -- StateManager is optional. CharacterManager is required.
+        local stateManager = constructOptional(
+            "StateManager",
+            function()
+                return StateManager.new()
+            end
+        )
 
-        local characterManager = construct(function()
-            return CharacterManager.new(player)
-        end)
+        local characterManager = constructRequired(
+            "CharacterManager",
+            function()
+                return CharacterManager.new(player)
+            end
+        )
 
         -- FOUNDATION B
-        local factionValidator = construct(function()
-            return FactionValidator.new(config)
-        end)
+        local factionValidator = constructRequired(
+            "FactionValidator",
+            function()
+                return FactionValidator.new(config)
+            end
+        )
 
-        local targetDiscovery = construct(function()
-            return TargetDiscovery.new(
-                player,
-                config,
-                factionValidator
-            )
-        end)
+        local targetDiscovery = constructRequired(
+            "TargetDiscovery",
+            function()
+                return TargetDiscovery.new(
+                    player,
+                    config,
+                    factionValidator
+                )
+            end
+        )
 
         -- FOUNDATION C
-        local physicsObserver = construct(function()
-            return PhysicsObserver.new()
-        end)
+        local physicsObserver = constructRequired(
+            "PhysicsObserver",
+            function()
+                return PhysicsObserver.new()
+            end
+        )
 
-        local velocityEstimator = construct(function()
-            return VelocityEstimator.new(config)
-        end)
+        local velocityEstimator = constructRequired(
+            "VelocityEstimator",
+            function()
+                return VelocityEstimator.new(config)
+            end
+        )
 
         -- FOUNDATION D
-        -- Constructed but NOT started.
-        local samplingCoordinator = construct(function()
-            return SamplingCoordinator.new({
-                config = config,
-                player = player,
-                characterManager = characterManager,
-                targetDiscovery = targetDiscovery,
-                physicsObserver = physicsObserver,
-                velocityEstimator = velocityEstimator,
-                runService = RunService,
-            })
-        end)
+        -- Optional. Constructed but NOT started.
+        local samplingCoordinator = constructOptional(
+            "SamplingCoordinator",
+            function()
+                return SamplingCoordinator.new({
+                    config = config,
+                    player = player,
+                    characterManager = characterManager,
+                    targetDiscovery = targetDiscovery,
+                    physicsObserver = physicsObserver,
+                    velocityEstimator = velocityEstimator,
+                    runService = RunService,
+                })
+            end
+        )
 
         -- FOUNDATION E
-        local telemetryPanel = construct(function()
-            return TelemetryPanel.new(
-                player,
-                config.telemetryPanelEnabled
-            )
-        end)
+        local telemetryPanel = constructOptional(
+            "TelemetryPanel",
+            function()
+                return TelemetryPanel.new(
+                    player,
+                    config.telemetryPanelEnabled
+                )
+            end
+        )
 
         -- FOUNDATION F
-        local pathfindingEngine = construct(function()
-            return PathfindingEngine.new(config)
-        end)
+        local pathfindingEngine = constructRequired(
+            "PathfindingEngine",
+            function()
+                return PathfindingEngine.new(config)
+            end
+        )
 
         -- FOUNDATION G
-        local waypointTracker = construct(function()
-            return WaypointTracker.new(config)
-        end)
+        local waypointTracker = constructRequired(
+            "WaypointTracker",
+            function()
+                return WaypointTracker.new(config)
+            end
+        )
 
         -- FOUNDATION H
-        local movementController = construct(function()
-            return MovementController.new(
-                config,
-                characterManager
-            )
-        end)
+        -- MovementController is optional to BehaviorComposition.
+        local movementController = constructOptional(
+            "MovementController",
+            function()
+                return MovementController.new(
+                    config,
+                    characterManager
+                )
+            end
+        )
 
         -- FOUNDATION I
-        local recoveryAnalysis = construct(function()
-            return RecoveryAnalysis.new(config)
-        end)
+        local recoveryAnalysis = constructOptional(
+            "RecoveryAnalysis",
+            function()
+                return RecoveryAnalysis.new(config)
+            end
+        )
 
-        local adaptiveRepath = construct(function()
-            return AdaptiveRepath.new(
-                config,
-                recoveryAnalysis
-            )
-        end)
+        -- AdaptiveRepath accepts nil RecoveryAnalysis.
+        -- It remains independently constructible if that module fails.
+        local adaptiveRepath = constructOptional(
+            "AdaptiveRepath",
+            function()
+                return AdaptiveRepath.new(
+                    config,
+                    recoveryAnalysis
+                )
+            end
+        )
 
         -- FOUNDATION K
-        local confidenceLedger = construct(function()
-            return ConfidenceLedger.new(config)
-        end)
+        local confidenceLedger = constructOptional(
+            "ConfidenceLedger",
+            function()
+                return ConfidenceLedger.new(config)
+            end
+        )
 
-        local decisionLedger = construct(function()
-            return DecisionLedger.new(config)
-        end)
+        local decisionLedger = constructOptional(
+            "DecisionLedger",
+            function()
+                return DecisionLedger.new(config)
+            end
+        )
 
-        local uncertaintyMap = construct(function()
-            return UncertaintyMap.new(config)
-        end)
+        local uncertaintyMap = constructOptional(
+            "UncertaintyMap",
+            function()
+                return UncertaintyMap.new(config)
+            end
+        )
 
         -- Shared stores supplied to Arena Analysis.
+        -- Missing optional stores remain absent from this table.
         local stores = {
             confidenceLedger = confidenceLedger,
             decisionLedger = decisionLedger,
@@ -238,31 +467,36 @@ function ClientInitializer.new(options)
         }
 
         -- BEHAVIOR + ARENA ANALYSIS
-        local behaviorComposition = construct(function()
-            return BehaviorComposition.new(
-                config,
-                worldRoot,
-                {
-                    characterManager = characterManager,
-                    targetDiscovery = targetDiscovery,
-                    physicsObserver = physicsObserver,
-                    velocityEstimator = velocityEstimator,
-                    pathfindingEngine = pathfindingEngine,
-                    waypointTracker = waypointTracker,
-                    movementController = movementController,
-                    recoveryAnalysis = recoveryAnalysis,
-                },
-                {
-                    arenaOverrides = options.arenaOverrides,
-                    adapterOptions = options.adapterOptions,
-                    decisionOptions = options.decisionOptions,
-                    evaluatorOptions = options.evaluatorOptions,
-                    routeOptions = options.routeOptions,
-                    behaviorOptions = options.behaviorOptions,
-                    stores = stores,
-                }
-            )
-        end)
+        -- This is a required behavior bundle.
+        -- Its internal dependencies are not independently isolated here.
+        local behaviorComposition = constructRequired(
+            "BehaviorComposition",
+            function()
+                return BehaviorComposition.new(
+                    config,
+                    worldRoot,
+                    {
+                        characterManager = characterManager,
+                        targetDiscovery = targetDiscovery,
+                        physicsObserver = physicsObserver,
+                        velocityEstimator = velocityEstimator,
+                        pathfindingEngine = pathfindingEngine,
+                        waypointTracker = waypointTracker,
+                        movementController = movementController,
+                        recoveryAnalysis = recoveryAnalysis,
+                    },
+                    {
+                        arenaOverrides = options.arenaOverrides,
+                        adapterOptions = options.adapterOptions,
+                        decisionOptions = options.decisionOptions,
+                        evaluatorOptions = options.evaluatorOptions,
+                        routeOptions = options.routeOptions,
+                        behaviorOptions = options.behaviorOptions,
+                        stores = stores,
+                    }
+                )
+            end
+        )
 
         -- NAVIGATION CORE
         -- Core validates the assembled interfaces.
@@ -311,12 +545,15 @@ function ClientInitializer.new(options)
                 behaviorComposition.BehaviorCoordinator,
         }
 
-        local navigationCore = construct(function()
-            return NavigationCore.new({
-                config = config,
-                modules = modules,
-            })
-        end)
+        local navigationCore = constructRequired(
+            "NavigationCore",
+            function()
+                return NavigationCore.new({
+                    config = config,
+                    modules = modules,
+                })
+            end
+        )
 
         return {
             Config = config,
@@ -351,10 +588,14 @@ function ClientInitializer.new(options)
 
             Stores = stores,
             Lifecycle = lifecycle,
+
+            InitializationErrors = initializationErrors,
         }
     end)
 
     if not ok then
+        -- Required construction failed.
+        -- LifecycleManager cleans every previously registered module.
         lifecycle:Destroy()
         error(result, 2)
     end
@@ -398,7 +639,16 @@ function ClientInitializer:StartSampling()
         return false, "Destroyed"
     end
 
-    return self._modules.SamplingCoordinator:Start()
+    local module = self._modules.NavigationCore:GetModule(
+        "SamplingCoordinator"
+    )
+    local method = getCallable(module, "Start")
+
+    if not method then
+        return false, "ModuleUnavailable"
+    end
+
+    return method(module)
 end
 
 function ClientInitializer:StopSampling()
@@ -406,7 +656,16 @@ function ClientInitializer:StopSampling()
         return false, "Destroyed"
     end
 
-    return self._modules.SamplingCoordinator:Stop()
+    local module = self._modules.NavigationCore:GetModule(
+        "SamplingCoordinator"
+    )
+    local method = getCallable(module, "Stop")
+
+    if not method then
+        return false, "ModuleUnavailable"
+    end
+
+    return method(module)
 end
 
 function ClientInitializer:SetSamplingTarget(candidate)
@@ -414,7 +673,16 @@ function ClientInitializer:SetSamplingTarget(candidate)
         return false, "Destroyed"
     end
 
-    return self._modules.SamplingCoordinator:SetTarget(candidate)
+    local module = self._modules.NavigationCore:GetModule(
+        "SamplingCoordinator"
+    )
+    local method = getCallable(module, "SetTarget")
+
+    if not method then
+        return false, "ModuleUnavailable"
+    end
+
+    return method(module, candidate)
 end
 
 function ClientInitializer:ClearSamplingTarget(reason)
@@ -422,7 +690,16 @@ function ClientInitializer:ClearSamplingTarget(reason)
         return false, "Destroyed"
     end
 
-    return self._modules.SamplingCoordinator:ClearTarget(reason)
+    local module = self._modules.NavigationCore:GetModule(
+        "SamplingCoordinator"
+    )
+    local method = getCallable(module, "ClearTarget")
+
+    if not method then
+        return false, "ModuleUnavailable"
+    end
+
+    return method(module, reason)
 end
 
 function ClientInitializer:GetSamplingLatest()
@@ -430,7 +707,16 @@ function ClientInitializer:GetSamplingLatest()
         return nil, "Destroyed"
     end
 
-    return self._modules.SamplingCoordinator:GetLatest()
+    local module = self._modules.NavigationCore:GetModule(
+        "SamplingCoordinator"
+    )
+    local method = getCallable(module, "GetLatest")
+
+    if not method then
+        return nil, "ModuleUnavailable"
+    end
+
+    return method(module)
 end
 
 function ClientInitializer:GetStatus()
@@ -442,13 +728,64 @@ function ClientInitializer:GetStatus()
     end
 
     local modules = self._modules
+    local navigationCore = modules.NavigationCore
+
+    local coreStatus = navigationCore:GetStatus()
+    local coreErrors = navigationCore:GetErrors()
+    local initializationErrors = copyInitializationErrors(
+        modules.InitializationErrors
+    )
+
+    local combinedErrors = {}
+
+    for _, record in ipairs(coreErrors) do
+        combinedErrors[#combinedErrors + 1] = record
+    end
+
+    for _, record in ipairs(initializationErrors) do
+        combinedErrors[#combinedErrors + 1] = record
+    end
+
+    local sampling = nil
+    local samplingStatus = "ModuleUnavailable"
+    local samplingError = nil
+
+    local samplingModule = navigationCore:GetModule("SamplingCoordinator")
+    local getLatest = getCallable(
+        samplingModule,
+        "GetLatest"
+    )
+
+    if getLatest then
+        local ok, latest, reason = pcall(
+            getLatest,
+            samplingModule
+        )
+
+        if ok then
+            sampling = latest
+            samplingStatus = reason or "Available"
+        else
+            samplingStatus = "ReadFailed"
+            samplingError = stringifyReason(latest)
+        end
+    end
 
     return {
-        status = modules.NavigationCore:GetStatus(),
-        capabilities = modules.NavigationCore:GetCapabilities(),
-        errors = modules.NavigationCore:GetErrors(),
+        status = coreStatus,
+        capabilities = navigationCore:GetCapabilities(),
+
+        errors = combinedErrors,
+        initializationErrors = initializationErrors,
+        initializationStatus =
+            #initializationErrors > 0 and "Degraded" or "Ready",
+
         behavior = modules.BehaviorComposition:GetStatus(),
-        sampling = modules.SamplingCoordinator:GetLatest(),
+
+        sampling = sampling,
+        samplingStatus = samplingStatus,
+        samplingError = samplingError,
+
         timestamp = os.clock(),
     }
 end
