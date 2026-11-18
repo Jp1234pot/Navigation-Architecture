@@ -14,12 +14,24 @@ ArenaAnalysisPipeline.__index = ArenaAnalysisPipeline
 
 function ArenaAnalysisPipeline.new(worldRoot, overrides)
     local config = ArenaAnalysisConfig.Create(overrides)
+    local resolvedWorldRoot = worldRoot or workspace
+    assert(typeof(resolvedWorldRoot) == "Instance", "ArenaAnalysisPipeline requires a valid worldRoot Instance")
+
+    -- Copy observer configuration so the pipeline can inject worldRoot
+    -- without modifying the shared configuration.
+    local observerOptions = {}
+    for key, value in pairs(config.observer) do
+        observerOptions[key] = value
+    end
+    observerOptions.worldRoot = resolvedWorldRoot
+
+    local observer = ArenaGeometryObserver.new(observerOptions)
 
     local self = setmetatable({
         _config = config,
         _destroyed = false,
         _latest = nil,
-        _observer = ArenaGeometryObserver.new(worldRoot, config.observer),
+        _observer = observer,
         _reachability = ReachabilityAnalyzer.new(config.reachability),
         _confidence = SpatialConfidenceIntegrator.new(config.confidence),
         _routes = RouteLaboratory.new(config.route),
