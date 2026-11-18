@@ -230,7 +230,7 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
         local sectorSurface = nil
         if isUsableSurface(sector.surface) then
             sectorSurface = addSurface(surfaces, sector.surface, {
-                label = "Sector" + tostring(index),
+                label = "Sector" .. tostring(index),
                 sectorIndex = index,
                 dedupeDistance = options.dedupeDistance,
             })
