@@ -73,7 +73,7 @@ local function isUsableSurface(hit)
         and isFiniteVector3(hit.normal)
 end
 
--- [A] Added helper function below isUsableSurface
+-- Added helper function below isUsableSurface
 local function isSectorPathClear(sector)
     return type(sector) == "table"
         and sector.obstructionObserved == true
@@ -81,7 +81,7 @@ local function isSectorPathClear(sector)
         and sector.obstructionHighBlocked == false
 end
 
--- [B] Modified addSurface to return existing or newly created surface
+-- Modified addSurface to return existing or newly created surface
 local function addSurface(surfaces, hit, source)
     if not isUsableSurface(hit) then
         return nil
@@ -166,7 +166,6 @@ function ReachabilityAnalyzer.new(options)
     }, ReachabilityAnalyzer)
 end
 
--- [C] Replaced Analyze() function
 function ReachabilityAnalyzer:Analyze(snapshot, now)
     if self._destroyed then
         return nil, "Destroyed"
@@ -214,6 +213,7 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
     })
 
     local connections = {}
+    local connectionKeys = {}
     local pairComparisons = 0
 
     for index = 1, expectedSectorCount do
@@ -253,6 +253,11 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
             continue
         end
 
+        -- A deduplicated surface cannot form a route to itself.
+        if centerSurface.id == sectorSurface.id then
+            continue
+        end
+
         pairComparisons += 1
         local connection = classifyPair(
             centerSurface,
@@ -260,10 +265,17 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
             options
         )
         if connection then
-            connection.connectionEvidence = "RadialObstructionProbesClear"
-            connection.requiresValidation = true
-            connection.isGuaranteedReachable = false
-            connections[#connections + 1] = connection
+            local connectionKey = connection.from .. ">" .. connection.to
+
+            -- Multiple radial sectors may resolve to the same surface.
+            if not connectionKeys[connectionKey] then
+                connection.connectionEvidence = "RadialObstructionProbesClear"
+                connection.requiresValidation = true
+                connection.isGuaranteedReachable = false
+
+                connections[#connections + 1] = connection
+                connectionKeys[connectionKey] = true
+            end
         end
     end
 
