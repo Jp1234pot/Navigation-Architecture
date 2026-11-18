@@ -6,6 +6,8 @@
 local ArenaGeometryObserver = {}
 ArenaGeometryObserver.__index = ArenaGeometryObserver
 
+local TWO_PI = math.pi * 2
+
 local function isFiniteNumber(value)
     return type(value) == "number"
         and value == value
@@ -29,6 +31,7 @@ local function validateOptions(options)
     local obstructionHeights = options.obstructionHeights or { 1.5, 3.5 }
     local surfaceStartHeight = options.surfaceStartHeight or 6
     local surfaceDepth = options.surfaceDepth or 24
+    local filterInstances = options.filterInstances or {}
 
     assert(isFiniteNumber(radialSamples) and radialSamples % 1 == 0
         and radialSamples >= 4 and radialSamples <= 16,
@@ -45,124 +48,170 @@ local function validateOptions(options)
         and surfaceStartHeight <= 20, "surfaceStartHeight must be from 1 to 20 studs")
     assert(isFiniteNumber(surfaceDepth) and surfaceDepth >= 4 and surfaceDepth <= 64,
         "surfaceDepth must be from 4 to 64 studs")
+    assert(type(filterInstances) == "table", "filterInstances must be a table")
+
+    local lowHeight, highHeight = table.unpack(obstructionHeights)
 
     return {
         radialSamples = radialSamples,
         probeDistance = probeDistance,
-        obstructionHeights = { obstructionHeights[1], obstructionHeights[2] },
+        obstructionHeights = { lowHeight, highHeight },
         surfaceStartHeight = surfaceStartHeight,
         surfaceDepth = surfaceDepth,
+        filterInstances = filterInstances,
+        worldRoot = options.worldRoot or workspace,
     }
 end
 
-local function describeHit(result, originY)
-    if not result then
+local function safeRaycast(worldRoot, origin, direction, params)
+    if worldRoot == nil then
+        return nil, false, "MissingWorldRoot"
+    end
+    local ok, result = pcall(function()
+        return worldRoot:Raycast(origin, direction, params)
+    end)
+    if not ok then
+        return nil, false, tostring(result)
+    end
+    return result, true, nil
+end
+
+local function describeHit(hit, originY)
+    if not hit then
         return nil
     end
-
-    local instance = result.Instance
     return {
-        instance = instance,
-        position = result.Position,
-        normal = result.Normal,
-        material = result.Material.Name,
-        distance = result.Distance,
-        heightDelta = result.Position.Y - originY,
-        isTerrain = instance == workspace.Terrain,
+        position = hit.Position,
+        normal = hit.Normal,
+        distance = hit.Distance,
+        material = hit.Material,
+        elevationDelta = hit.Position.Y - originY,
     }
 end
 
-function ArenaGeometryObserver.new(worldRoot, options)
-    assert(worldRoot and type(worldRoot.Raycast) == "function",
-        "ArenaGeometryObserver requires a WorldRoot such as Workspace")
+function ArenaGeometryObserver.new(options)
+    local config = validateOptions(options)
 
-    return setmetatable({
-        _worldRoot = worldRoot,
-        _options = validateOptions(options),
-        _destroyed = false,
-        _scanCount = 0,
+    local self = setmetatable({
+        _config = config,
+        _worldRoot = config.worldRoot,
     }, ArenaGeometryObserver)
+
+    return self
 end
 
--- Scan is deliberately caller-invoked. It performs one center ground probe and
--- three probes per radial direction, then returns a snapshot. It never moves
--- the character or creates a background loop.
-function ArenaGeometryObserver:Scan(origin, characterToExclude)
-    if self._destroyed then
-        return nil, "Destroyed"
-    end
-    if not isFiniteVector3(origin) then
-        return nil, "InvalidOrigin"
-    end
+function ArenaGeometryObserver:setFilterInstances(instances)
+    assert(type(instances) == "table", "instances must be a table")
+    self._config.filterInstances = instances
+end
 
-    local options = self._options
+function ArenaGeometryObserver:observe(origin, characterToExclude)
+    assert(isFiniteVector3(origin), "origin must be a finite Vector3")
+
+    local cfg = self._config
+    local lowHeight, highHeight = table.unpack(cfg.obstructionHeights)
     local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = cfg.filterInstances
     params.IgnoreWater = true
-    params.RespectCanCollide = true
-    if characterToExclude then
-        params.ExcludeInstances = { characterToExclude }
+
+    if characterToExclude ~= nil then
+        if typeof(characterToExclude) ~= "Instance" then
+            return nil, "InvalidCharacterExclusion"
+        end
+        local ok = pcall(function()
+            params.ExcludeInstances = { characterToExclude }
+        end)
+        if not ok then
+            return nil, "CharacterExclusionFailed"
+        end
     end
 
     local snapshot = {
         origin = origin,
-        timestamp = os.clock(),
-        centerSurface = nil,
-        sectors = {},
         rayCount = 0,
-        radialSamples = options.radialSamples,
+        centerSurface = nil,
+        sectors = table.create(cfg.radialSamples),
     }
 
-    local centerOrigin = origin + Vector3.new(0, options.surfaceStartHeight, 0)
-    local centerDirection = Vector3.new(0, -options.surfaceStartHeight - options.surfaceDepth, 0)
-    local centerHit = self._worldRoot:Raycast(centerOrigin, centerDirection, params)
+    -- 1. Center probe directly beneath origin
+    local centerOrigin = origin + Vector3.new(0, cfg.surfaceStartHeight, 0)
+    local centerDirection = Vector3.new(0, -(cfg.surfaceStartHeight + cfg.surfaceDepth), 0)
+
+    local centerHit, centerOk, centerReason = safeRaycast(self._worldRoot, centerOrigin, centerDirection, params)
+    if not centerOk then
+        return nil, "CenterProbeFailed:" .. centerReason
+    end
     snapshot.rayCount += 1
     snapshot.centerSurface = describeHit(centerHit, origin.Y)
 
-    for index = 1, options.radialSamples do
-        local angle = ((index - 1) / options.radialSamples) * math.pi * 2
-        local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
-        local endpoint = origin + direction * options.probeDistance
+    -- 2. Radial sweep around origin
+    for i = 1, cfg.radialSamples do
+        local angle = ((i - 1) / cfg.radialSamples) * TWO_PI
+        local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
+        local rayDirection = dir * cfg.probeDistance
+
         local sector = {
-            index = index,
-            direction = direction,
+            index = i,
+            angle = angle,
+            direction = dir,
+            obstructionObserved = false,
+            obstructionLowBlocked = nil,
+            obstructionHighBlocked = nil,
             obstructionLow = nil,
             obstructionHigh = nil,
             surface = nil,
+            clearDistance = cfg.probeDistance,
         }
 
-        local lowOrigin = origin + Vector3.new(0, options.obstructionHeights[1], 0)
-        local highOrigin = origin + Vector3.new(0, options.obstructionHeights[2], 0)
-        local rayDirection = direction * options.probeDistance
-
-        local lowHit = self._worldRoot:Raycast(lowOrigin, rayDirection, params)
+        -- Low obstruction probe
+        local lowOrigin = origin + Vector3.new(0, lowHeight, 0)
+        local lowHit, lowOk, lowReason = safeRaycast(self._worldRoot, lowOrigin, rayDirection, params)
+        if not lowOk then
+            return nil, "LowObstructionProbeFailed:" .. lowReason
+        end
         snapshot.rayCount += 1
         sector.obstructionLow = describeHit(lowHit, origin.Y)
 
-        local highHit = self._worldRoot:Raycast(highOrigin, rayDirection, params)
+        -- High obstruction probe
+        local highOrigin = origin + Vector3.new(0, highHeight, 0)
+        local highHit, highOk, highReason = safeRaycast(self._worldRoot, highOrigin, rayDirection, params)
+        if not highOk then
+            return nil, "HighObstructionProbeFailed:" .. highReason
+        end
         snapshot.rayCount += 1
         sector.obstructionHigh = describeHit(highHit, origin.Y)
 
-        local surfaceOrigin = endpoint + Vector3.new(0, options.surfaceStartHeight, 0)
-        local surfaceDirection = Vector3.new(0, -options.surfaceStartHeight - options.surfaceDepth, 0)
-        local surfaceHit = self._worldRoot:Raycast(surfaceOrigin, surfaceDirection, params)
+        sector.obstructionObserved = true
+        sector.obstructionLowBlocked = lowHit ~= nil
+        sector.obstructionHighBlocked = highHit ~= nil
+
+        -- Determine unobstructed horizontal reach before probing downward
+        local clearDistance = cfg.probeDistance
+        if lowHit and lowHit.Distance < clearDistance then
+            clearDistance = lowHit.Distance
+        end
+        if highHit and highHit.Distance < clearDistance then
+            clearDistance = highHit.Distance
+        end
+        sector.clearDistance = clearDistance
+
+        -- Surface probe (pulled back 0.5 studs from walls so downward ray doesn't clip inside geometry)
+        local safeReach = math.max(0, clearDistance - 0.5)
+        local surfaceOrigin = origin + (dir * safeReach) + Vector3.new(0, cfg.surfaceStartHeight, 0)
+        local surfaceDirection = centerDirection
+
+        local surfaceHit, surfaceOk, surfaceReason = safeRaycast(self._worldRoot, surfaceOrigin, surfaceDirection, params)
+        if not surfaceOk then
+            return nil, "SurfaceProbeFailed:" .. surfaceReason
+        end
         snapshot.rayCount += 1
         sector.surface = describeHit(surfaceHit, origin.Y)
 
-        table.insert(snapshot.sectors, sector)
+        snapshot.sectors[i] = sector
     end
 
-    self._scanCount += 1
-    snapshot.scanNumber = self._scanCount
-    return snapshot, "Success"
-end
-
-function ArenaGeometryObserver:GetScanCount()
-    return self._scanCount
-end
-
-function ArenaGeometryObserver:Destroy()
-    self._destroyed = true
-    self._worldRoot = nil
+    return snapshot
 end
 
 return ArenaGeometryObserver
