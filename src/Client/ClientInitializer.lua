@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Module: ClientInitializer
 -- Client-side construction and lifecycle entry point.
@@ -114,19 +113,21 @@ function ClientInitializer.new(options)
         end
 
         assert(
-            type(instance) == "table"
-                and type(instance.Destroy) == "function",
-            "Constructed module must provide Destroy()"
+            type(instance) == "table",
+            "Constructed module must return a table"
         )
 
-        local registered = lifecycle:AddCleanup(function()
-            safeDestroy(instance)
-        end)
+        -- Some modules own no resources and have no Destroy method.
+        if type(instance.Destroy) == "function" then
+            local registered = lifecycle:AddCleanup(function()
+                safeDestroy(instance)
+            end)
 
-        if not registered then
-            safeDestroy(instance)
-            lifecycle:Destroy()
-            error("Could not register module cleanup", 2)
+            if not registered then
+                safeDestroy(instance)
+                lifecycle:Destroy()
+                error("Could not register module cleanup", 2)
+            end
         end
 
         return instance
