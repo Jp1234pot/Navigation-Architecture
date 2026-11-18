@@ -112,6 +112,29 @@ local function getCallable(module, methodName)
     return method
 end
 
+local function getBehaviorCompositionMethod(self, methodName)
+    local modules = self._modules
+    local core = modules and modules.NavigationCore
+
+    if type(core) ~= "table" then
+        return nil, nil, "CoreUnavailable"
+    end
+
+    local composition, moduleReason = core:GetModule("BehaviorComposition")
+
+    if not composition then
+        return nil, nil, moduleReason
+    end
+
+    local method = getCallable(composition, methodName)
+
+    if not method then
+        return nil, nil, "MissingBehaviorCompositionMethod:" .. methodName
+    end
+
+    return composition, method, "OK"
+end
+
 local function stringifyReason(reason)
     local ok, message = pcall(tostring, reason)
 
@@ -543,6 +566,8 @@ function ClientInitializer.new(options)
 
             BehaviorCoordinator =
                 behaviorComposition.BehaviorCoordinator,
+
+            BehaviorComposition = behaviorComposition,
         }
 
         local navigationCore = constructRequired(
@@ -611,7 +636,13 @@ function ClientInitializer:SetMode(mode)
         return false, "Destroyed"
     end
 
-    return self._modules.BehaviorComposition:SetMode(mode)
+    local composition, method, reason = getBehaviorCompositionMethod(self, "SetMode")
+
+    if not method then
+        return false, reason
+    end
+
+    return method(composition, mode)
 end
 
 function ClientInitializer:ProcessOnce(movementEnvelope)
@@ -619,7 +650,14 @@ function ClientInitializer:ProcessOnce(movementEnvelope)
         return nil, "Destroyed"
     end
 
-    return self._modules.BehaviorComposition:ProcessOnce(
+    local composition, method, reason = getBehaviorCompositionMethod(self, "ProcessOnce")
+
+    if not method then
+        return nil, reason
+    end
+
+    return method(
+        composition,
         movementEnvelope,
         self._modules.Stores
     )
@@ -630,7 +668,13 @@ function ClientInitializer:UpdateProgress()
         return nil, "Destroyed"
     end
 
-    return self._modules.BehaviorComposition:UpdateProgress()
+    local composition, method, reason = getBehaviorCompositionMethod(self, "UpdateProgress")
+
+    if not method then
+        return nil, reason
+    end
+
+    return method(composition)
 end
 
 -- Sampling is an explicit opt-in.
@@ -771,6 +815,33 @@ function ClientInitializer:GetStatus()
         end
     end
 
+    local behaviorComposition, getBehaviorStatus, behaviorReason = getBehaviorCompositionMethod(self, "GetStatus")
+    local behaviorStatus = {
+        status = "Unavailable",
+        reason = behaviorReason,
+    }
+
+    if getBehaviorStatus then
+        local behaviorOk, behaviorResult = pcall(
+            getBehaviorStatus,
+            behaviorComposition
+        )
+
+        if behaviorOk and type(behaviorResult) == "table" then
+            behaviorStatus = behaviorResult
+        elseif behaviorOk then
+            behaviorStatus = {
+                status = "InvalidStatus",
+                reason = "GetStatusMustReturnTable",
+            }
+        else
+            behaviorStatus = {
+                status = "ReadFailed",
+                reason = stringifyReason(behaviorResult),
+            }
+        end
+    end
+
     return {
         status = coreStatus,
         capabilities = navigationCore:GetCapabilities(),
@@ -780,7 +851,7 @@ function ClientInitializer:GetStatus()
         initializationStatus =
             #initializationErrors > 0 and "Degraded" or "Ready",
 
-        behavior = modules.BehaviorComposition:GetStatus(),
+        behavior = behaviorStatus,
 
         sampling = sampling,
         samplingStatus = samplingStatus,
