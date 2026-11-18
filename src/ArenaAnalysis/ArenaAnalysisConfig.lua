@@ -31,6 +31,7 @@ local DEFAULTS = {
         maxSurfaces = 17,
         maxConnections = 16,
         maxUnobservedSectors = 16,
+        maxUncertainSectors = 16,
         ageWeight = 0.4,
         coverageWeight = 0.6,
         uncertaintyReason = "Spatial observation coverage estimate",
