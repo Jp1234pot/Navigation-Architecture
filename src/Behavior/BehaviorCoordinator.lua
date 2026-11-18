@@ -301,11 +301,19 @@ function BehaviorCoordinator:Process(
                 result.status = "ArenaCandidateBuildFailed"
                 result.reason = candidateStatus or "NoEscapeCandidates"
 
+                result.arenaCandidateStatus = candidateStatus
+                result.arenaCandidateCount = 0
+                result.arenaCandidateReport = candidatePacket
+
                 self._latest = result
                 return copyRecord(result), result.reason
             end
 
             resolvedEscapeCandidates = candidates
+
+            result.arenaCandidateStatus = candidateStatus or "Built"
+            result.arenaCandidateCount = #candidates
+            result.arenaCandidateReport = candidatePacket
         end
 
         local evaluationOk, evaluation, evaluationReason =
