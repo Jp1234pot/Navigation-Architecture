@@ -199,8 +199,13 @@ function BehaviorComposition.new(
             error(instance, 2)
         end
 
-        assert(instance ~= nil,
-            "A composed module returned nil")
+        if type(instance) ~= "table" then
+            destroyOwned(owned)
+            error(
+                "A composed module returned an invalid instance",
+                2
+            )
+        end
 
         owned[#owned + 1] = instance
 
@@ -323,13 +328,26 @@ function BehaviorComposition.new(
         end
     end
 
-    local callbackOk, callbackReason =
-        dependencies.pathfindingEngine:SetOnResult(
-            resultCallback
-        )
+    local callbackCallOk, callbackAccepted, callbackReason =
+        pcall(function()
+            return dependencies.pathfindingEngine:SetOnResult(
+                resultCallback
+            )
+        end)
 
-    if not callbackOk then
+    if not callbackCallOk then
         destroyOwned(owned)
+
+        error(
+            "Could not connect PathfindingEngine results: "
+                .. tostring(callbackAccepted),
+            2
+        )
+    end
+
+    if not callbackAccepted then
+        destroyOwned(owned)
+
         error(
             "Could not connect PathfindingEngine results: "
                 .. tostring(callbackReason),
