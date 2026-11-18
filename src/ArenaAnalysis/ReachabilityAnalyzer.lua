@@ -73,20 +73,29 @@ local function isUsableSurface(hit)
         and isFiniteVector3(hit.normal)
 end
 
+-- [A] Added helper function below isUsableSurface
+local function isSectorPathClear(sector)
+    return type(sector) == "table"
+        and sector.obstructionObserved == true
+        and sector.obstructionLowBlocked == false
+        and sector.obstructionHighBlocked == false
+end
+
+-- [B] Modified addSurface to return existing or newly created surface
 local function addSurface(surfaces, hit, source)
     if not isUsableSurface(hit) then
-        return
+        return nil
     end
 
     for _, existing in ipairs(surfaces) do
         if existing.instance == hit.instance
             and (existing.position - hit.position).Magnitude <= source.dedupeDistance then
             existing.sources[#existing.sources + 1] = source.label
-            return
+            return existing
         end
     end
 
-    surfaces[#surfaces + 1] = {
+    local created = {
         id = "Surface" .. tostring(#surfaces + 1),
         instance = hit.instance,
         position = hit.position,
@@ -95,6 +104,9 @@ local function addSurface(surfaces, hit, source)
         sources = { source.label },
         sectorIndex = source.sectorIndex,
     }
+
+    surfaces[#surfaces + 1] = created
+    return created
 end
 
 local function surfaceIsWalkableCandidate(surface, minimumNormalY)
@@ -154,15 +166,19 @@ function ReachabilityAnalyzer.new(options)
     }, ReachabilityAnalyzer)
 end
 
--- Analyze one caller-supplied Foundation L1 snapshot. No world queries or
--- asynchronous work are performed. Each snapshot is capped at 17 surfaces,
--- yielding at most 136 unordered pair comparisons.
+-- [C] Replaced Analyze() function
 function ReachabilityAnalyzer:Analyze(snapshot, now)
     if self._destroyed then
         return nil, "Destroyed"
     end
-    if type(snapshot) ~= "table" or not isFiniteVector3(snapshot.origin)
-        or not isFiniteNumber(snapshot.timestamp) or type(snapshot.sectors) ~= "table" then
+    if type(snapshot) ~= "table"
+        or not isFiniteVector3(snapshot.origin)
+        or not isFiniteNumber(snapshot.timestamp)
+        or type(snapshot.sectors) ~= "table"
+        or not isFiniteNumber(snapshot.radialSamples)
+        or snapshot.radialSamples % 1 ~= 0
+        or snapshot.radialSamples < 4
+        or snapshot.radialSamples > 16 then
         return nil, "InvalidSnapshot"
     end
 
@@ -180,45 +196,79 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
     end
 
     local options = self._options
-    local surfaces = {}
-    local unobservedSectorCount = 0
+    local expectedSectorCount = snapshot.radialSamples
+    if #snapshot.sectors > expectedSectorCount then
+        return nil, "SectorLimitExceeded"
+    end
 
-    addSurface(surfaces, snapshot.centerSurface, {
+    local surfaces = {}
+    local centerSurface = nil
+    local unobservedSectorCount = 0
+    local blockedSectorCount = 0
+    local unverifiedConnectionSectorCount = 0
+
+    centerSurface = addSurface(surfaces, snapshot.centerSurface, {
         label = "Center",
         sectorIndex = nil,
         dedupeDistance = options.dedupeDistance,
     })
 
-    local sectorCount = math.min(#snapshot.sectors, 16)
-    for index = 1, sectorCount do
+    local connections = {}
+    local pairComparisons = 0
+
+    for index = 1, expectedSectorCount do
         local sector = snapshot.sectors[index]
-        if type(sector) == "table" and isUsableSurface(sector.surface) then
-            addSurface(surfaces, sector.surface, {
-                label = "Sector" .. tostring(sector.index or index),
-                sectorIndex = sector.index or index,
+        if type(sector) ~= "table" then
+            unobservedSectorCount += 1
+            unverifiedConnectionSectorCount += 1
+            continue
+        end
+
+        local sectorIndex = sector.index
+        if not isFiniteNumber(sectorIndex) or sectorIndex % 1 ~= 0 or sectorIndex ~= index then
+            return nil, "InvalidSectorIndex"
+        end
+
+        local sectorSurface = nil
+        if isUsableSurface(sector.surface) then
+            sectorSurface = addSurface(surfaces, sector.surface, {
+                label = "Sector" .. tostring(index),
+                sectorIndex = index,
                 dedupeDistance = options.dedupeDistance,
             })
         else
             unobservedSectorCount += 1
         end
+
+        if not isSectorPathClear(sector) then
+            if sector.obstructionObserved == true then
+                blockedSectorCount += 1
+            else
+                unverifiedConnectionSectorCount += 1
+            end
+            continue
+        end
+
+        if not centerSurface or not sectorSurface then
+            continue
+        end
+
+        pairComparisons += 1
+        local connection = classifyPair(
+            centerSurface,
+            sectorSurface,
+            options
+        )
+        if connection then
+            connection.connectionEvidence = "RadialObstructionProbesClear"
+            connection.requiresValidation = true
+            connection.isGuaranteedReachable = false
+            connections[#connections + 1] = connection
+        end
     end
 
     if #surfaces > options.maxSurfaces then
-        for index = #surfaces, options.maxSurfaces + 1, -1 do
-            surfaces[index] = nil
-        end
-    end
-
-    local connections = {}
-    local pairComparisons = 0
-    for firstIndex = 1, #surfaces do
-        for secondIndex = firstIndex + 1, #surfaces do
-            pairComparisons += 1
-            local connection = classifyPair(surfaces[firstIndex], surfaces[secondIndex], options)
-            if connection then
-                connections[#connections + 1] = connection
-            end
-        end
+        return nil, "SurfaceLimitExceeded"
     end
 
     self._analysisCount += 1
@@ -239,7 +289,10 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
         surfaceCount = #surfaces,
         connectionCount = #connections,
         pairComparisons = pairComparisons,
+        expectedSectorCount = expectedSectorCount,
         unobservedSectorCount = unobservedSectorCount,
+        blockedSectorCount = blockedSectorCount,
+        unverifiedConnectionSectorCount = unverifiedConnectionSectorCount,
         analysisNumber = self._analysisCount,
         limits = {
             isHeuristic = true,
@@ -247,6 +300,8 @@ function ReachabilityAnalyzer:Analyze(snapshot, now)
             guaranteesReachability = false,
             usesCharacterJumpSettings = false,
             performsWorldQueries = false,
+            usesOnlyRadialConnections = true,
+            crossSectorConnectionsVerified = false,
         },
     }, status
 end
@@ -260,4 +315,3 @@ function ReachabilityAnalyzer:Destroy()
 end
 
 return ReachabilityAnalyzer
-                  
