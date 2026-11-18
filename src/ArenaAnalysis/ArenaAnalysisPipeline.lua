@@ -84,6 +84,8 @@ function ArenaAnalysisPipeline:Observe(origin, characterToExclude, stores)
             selectsTargets = false,
             tracksPlayersOrTools = false,
             tracksBombOrMatchState = false,
+            usesOnlyRadialConnections = true,
+            crossSectorConnectionsVerified = false,
         },
     }
     self._latest = packet
