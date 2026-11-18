@@ -22,6 +22,21 @@ local function isFiniteVector3(value)
         and isFiniteNumber(value.Z)
 end
 
+local function copyFilterInstances(instances)
+    assert(type(instances) == "table", "filterInstances must be a table")
+    local count = 0
+    for index, instance in pairs(instances) do
+        assert(
+            type(index) == "number" and index >= 1 and index % 1 == 0,
+            "filterInstances must be a sequential array"
+        )
+        assert(typeof(instance) == "Instance", "filterInstances entries must be Instances")
+        count += 1
+    end
+    assert(count == #instances, "filterInstances must not contain array gaps")
+    return table.clone(instances)
+end
+
 local function validateOptions(options)
     options = options or {}
     assert(type(options) == "table", "options must be a table")
@@ -31,7 +46,7 @@ local function validateOptions(options)
     local obstructionHeights = options.obstructionHeights or { 1.5, 3.5 }
     local surfaceStartHeight = options.surfaceStartHeight or 6
     local surfaceDepth = options.surfaceDepth or 24
-    local filterInstances = options.filterInstances or {}
+    local filterInstances = copyFilterInstances(options.filterInstances or {})
 
     assert(isFiniteNumber(radialSamples) and radialSamples % 1 == 0
         and radialSamples >= 4 and radialSamples <= 16,
@@ -48,7 +63,6 @@ local function validateOptions(options)
         and surfaceStartHeight <= 20, "surfaceStartHeight must be from 1 to 20 studs")
     assert(isFiniteNumber(surfaceDepth) and surfaceDepth >= 4 and surfaceDepth <= 64,
         "surfaceDepth must be from 4 to 64 studs")
-    assert(type(filterInstances) == "table", "filterInstances must be a table")
 
     local lowHeight, highHeight = table.unpack(obstructionHeights)
     local worldRoot = options.worldRoot or workspace
@@ -109,8 +123,7 @@ function ArenaGeometryObserver.new(options)
 end
 
 function ArenaGeometryObserver:setFilterInstances(instances)
-    assert(type(instances) == "table", "instances must be a table")
-    self._config.filterInstances = instances
+    self._config.filterInstances = copyFilterInstances(instances)
 end
 
 function ArenaGeometryObserver:Scan(origin, characterToExclude)
@@ -118,21 +131,22 @@ function ArenaGeometryObserver:Scan(origin, characterToExclude)
 
     local cfg = self._config
     local lowHeight, highHeight = table.unpack(cfg.obstructionHeights)
+    
     local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = cfg.filterInstances
-    params.IgnoreWater = true
-
+    local exclusions = table.clone(cfg.filterInstances)
     if characterToExclude ~= nil then
         if typeof(characterToExclude) ~= "Instance" then
             return nil, "InvalidCharacterExclusion"
         end
-        local ok = pcall(function()
-            params.ExcludeInstances = { characterToExclude }
-        end)
-        if not ok then
-            return nil, "CharacterExclusionFailed"
-        end
+        exclusions[#exclusions + 1] = characterToExclude
+    end
+    
+    local filterOk = pcall(function()
+        params.ExcludeInstances = exclusions
+        params.IgnoreWater = true
+    end)
+    if not filterOk then
+        return nil, "RaycastFilterConfigurationFailed"
     end
 
     local snapshot = {
