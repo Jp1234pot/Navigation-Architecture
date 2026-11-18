@@ -358,9 +358,6 @@ function BehaviorComposition:GetMode()
     return self.BehaviorDecision:GetMode()
 end
 
--- One explicit behavior-processing cycle.
--- Escape mode performs one bounded Arena Analysis candidate build.
--- Pursue mode does not perform an unnecessary Arena Analysis scan.
 function BehaviorComposition:ProcessOnce(
     movementEnvelope,
     stores
@@ -376,52 +373,27 @@ function BehaviorComposition:ProcessOnce(
         return nil, modeReason
     end
 
-    local escapeCandidates = nil
-    local arenaStatus = "NotRequired"
-    local arenaPacket = nil
+    local escapeCandidateProvider = nil
 
     if mode == "Escape" then
-        if type(movementEnvelope) ~= "table" then
-            escapeCandidates = {}
-            arenaStatus = "MovementEnvelopeRequired"
-        else
-            local buildOk, candidates, buildStatus, packet =
-                pcall(function()
-                    return self.ArenaEscapeCandidateAdapter:BuildCandidates(
-                        movementEnvelope,
-                        stores or self._stores
-                    )
-                end)
-
-            if buildOk and type(candidates) == "table" then
-                escapeCandidates = candidates
-                arenaStatus = buildStatus or "Built"
-                arenaPacket = packet
-            else
-                escapeCandidates = {}
-
-                arenaStatus = buildOk
-                    and (buildStatus or "CandidateBuildUnavailable")
-                    or ("CandidateBuildError:" .. tostring(candidates))
+        escapeCandidateProvider = function()
+            if type(movementEnvelope) ~= "table" then
+                return {}, "MovementEnvelopeRequired", nil
             end
+
+            return self.ArenaEscapeCandidateAdapter:BuildCandidates(
+                movementEnvelope,
+                stores or self._stores
+            )
         end
     end
 
-    local result, reason =
-        self.BehaviorCoordinator:Process(
-            escapeCandidates
-        )
-
-    if type(result) == "table" and mode == "Escape" then
-        result.arenaCandidateStatus = arenaStatus
-        result.arenaCandidateCount =
-            #escapeCandidates
-
-        result.arenaCandidateReport =
-            arenaPacket
-    end
-
-    return result, reason
+    -- BehaviorCoordinator now evaluates threats first.
+    -- The provider is invoked only after a valid Escape proposal.
+    return self.BehaviorCoordinator:Process(
+        nil,
+        escapeCandidateProvider
+    )
 end
 
 function BehaviorComposition:AcceptPathResult(packet)
