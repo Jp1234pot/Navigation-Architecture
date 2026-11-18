@@ -51,6 +51,12 @@ local function validateOptions(options)
     assert(type(filterInstances) == "table", "filterInstances must be a table")
 
     local lowHeight, highHeight = table.unpack(obstructionHeights)
+    local worldRoot = options.worldRoot or workspace
+    assert(typeof(worldRoot) == "Instance", "worldRoot must be a valid Instance")
+    local raycastOk, raycastMethod = pcall(function()
+        return worldRoot.Raycast
+    end)
+    assert(raycastOk and type(raycastMethod) == "function", "worldRoot must support Raycast")
 
     return {
         radialSamples = radialSamples,
@@ -59,7 +65,7 @@ local function validateOptions(options)
         surfaceStartHeight = surfaceStartHeight,
         surfaceDepth = surfaceDepth,
         filterInstances = filterInstances,
-        worldRoot = options.worldRoot or workspace,
+        worldRoot = worldRoot,
     }
 end
 
@@ -81,10 +87,11 @@ local function describeHit(hit, originY)
         return nil
     end
     return {
+        instance = hit.Instance,
         position = hit.Position,
         normal = hit.Normal,
         distance = hit.Distance,
-        material = hit.Material,
+        material = tostring(hit.Material),
         elevationDelta = hit.Position.Y - originY,
     }
 end
@@ -95,6 +102,7 @@ function ArenaGeometryObserver.new(options)
     local self = setmetatable({
         _config = config,
         _worldRoot = config.worldRoot,
+        _scanCount = 0,
     }, ArenaGeometryObserver)
 
     return self
@@ -105,7 +113,7 @@ function ArenaGeometryObserver:setFilterInstances(instances)
     self._config.filterInstances = instances
 end
 
-function ArenaGeometryObserver:observe(origin, characterToExclude)
+function ArenaGeometryObserver:Scan(origin, characterToExclude)
     assert(isFiniteVector3(origin), "origin must be a finite Vector3")
 
     local cfg = self._config
@@ -128,6 +136,8 @@ function ArenaGeometryObserver:observe(origin, characterToExclude)
     end
 
     local snapshot = {
+        timestamp = os.clock(),
+        radialSamples = cfg.radialSamples,
         origin = origin,
         rayCount = 0,
         centerSurface = nil,
@@ -211,7 +221,19 @@ function ArenaGeometryObserver:observe(origin, characterToExclude)
         snapshot.sectors[i] = sector
     end
 
-    return snapshot
+    self._scanCount = (self._scanCount or 0) + 1
+    return snapshot, "Success"
 end
+
+function ArenaGeometryObserver:GetScanCount()
+    return self._scanCount or 0
+end
+
+function ArenaGeometryObserver:Destroy()
+    -- Stateless observer, no cleanup needed
+end
+
+-- Preserve the previous lowercase interface.
+ArenaGeometryObserver.observe = ArenaGeometryObserver.Scan
 
 return ArenaGeometryObserver
