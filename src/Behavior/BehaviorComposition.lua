@@ -378,7 +378,7 @@ function BehaviorComposition:ProcessOnce(
     if mode == "Escape" then
         escapeCandidateProvider = function()
             if type(movementEnvelope) ~= "table" then
-                return {}, "MovementEnvelopeRequired", nil
+                return nil, "MovementEnvelopeRequired", nil
             end
 
             return self.ArenaEscapeCandidateAdapter:BuildCandidates(
