@@ -34,6 +34,8 @@ local function validateOptions(options)
         -- [A] Updated default maxConnections to 16
         maxConnections = options.maxConnections or 16,
         maxUnobservedSectors = options.maxUnobservedSectors or 16,
+        -- [EDIT 1] Added maxUncertainSectors configuration option default
+        maxUncertainSectors = options.maxUncertainSectors or 16,
         ageWeight = options.ageWeight or 0.4,
         coverageWeight = options.coverageWeight or 0.6,
         uncertaintyReason = options.uncertaintyReason or "Spatial observation coverage estimate",
@@ -53,6 +55,10 @@ local function validateOptions(options)
     assert(isFiniteNumber(result.maxUnobservedSectors) and result.maxUnobservedSectors % 1 == 0
         and result.maxUnobservedSectors >= 1 and result.maxUnobservedSectors <= 16,
         "maxUnobservedSectors must be an integer from 1 to 16")
+    -- [EDIT 1] Added validation assertion for maxUncertainSectors
+    assert(isFiniteNumber(result.maxUncertainSectors) and result.maxUncertainSectors % 1 == 0
+        and result.maxUncertainSectors >= 1 and result.maxUncertainSectors <= 16,
+        "maxUncertainSectors must be an integer from 1 to 16")
     assert(isFiniteNumber(result.ageWeight) and result.ageWeight >= 0 and result.ageWeight <= 1,
         "ageWeight must be from 0 to 1")
     assert(isFiniteNumber(result.coverageWeight) and result.coverageWeight >= 0
@@ -74,9 +80,11 @@ local function validateReport(report, options, now)
         return false, "InvalidReportTimestamp"
     end
     -- [C] Added required checks for expectedSectorCount, blockedSectorCount, and unverifiedConnectionSectorCount
+    -- [EDIT 2] Added not isFiniteNumber(report.uncertainSectorCount) check to shape validation
     if type(report.surfaces) ~= "table" or type(report.connections) ~= "table"
         or not isFiniteNumber(report.surfaceCount) or not isFiniteNumber(report.connectionCount)
         or not isFiniteNumber(report.unobservedSectorCount)
+        or not isFiniteNumber(report.uncertainSectorCount)
         or not isFiniteNumber(report.expectedSectorCount)
         or not isFiniteNumber(report.blockedSectorCount)
         or not isFiniteNumber(report.unverifiedConnectionSectorCount) then
@@ -94,6 +102,14 @@ local function validateReport(report, options, now)
         or report.unobservedSectorCount > options.maxUnobservedSectors
         or report.unobservedSectorCount % 1 ~= 0 then
         return false, "InvalidCoverageCount"
+    end
+
+    -- [EDIT 2] Added structural validation logic for uncertainSectorCount
+    if report.uncertainSectorCount < 0
+        or report.uncertainSectorCount > options.maxUncertainSectors
+        or report.uncertainSectorCount > report.expectedSectorCount
+        or report.uncertainSectorCount % 1 ~= 0 then
+        return false, "InvalidUncertainSectorCount"
     end
 
     -- [C] Added structural validation logic for sector counts
@@ -180,10 +196,8 @@ function SpatialConfidenceIntegrator:Integrate(report, stores, now)
 
     local ageUncertainty = clamp01(reportAge / options.maxReportAge)
     
-    -- [D] Replaced coverageUncertainty calculation using report metrics and expectedSectorCount
-    local coverageUncertainty = clamp01(
-        (report.unobservedSectorCount + report.unverifiedConnectionSectorCount) / report.expectedSectorCount
-    )
+    -- [EDIT 3] Replaced coverageUncertainty calculation to utilize report.uncertainSectorCount
+    local coverageUncertainty = clamp01(report.uncertainSectorCount / report.expectedSectorCount)
 
     local overallUncertainty = clamp01(
         ageUncertainty * options.ageWeight
