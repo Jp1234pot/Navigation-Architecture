@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Behavior adapter: ArenaEscapeCandidateAdapter
 --
@@ -274,7 +273,7 @@ function ArenaEscapeCandidateAdapter:BuildCandidates(movementEnvelope, stores)
                     candidates[#candidates + 1] = {
                         id = surface.id,
                         position = surface.position,
-                        reachable = true,
+                        routeCandidateAvailable = true,
                         feasibility = "WithinConfiguredEnvelope",
                         uncertainty = uncertaintyBySurface[surface.id] or 1,
                         routeCost = route.totalCost,
