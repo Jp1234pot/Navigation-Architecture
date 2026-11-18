@@ -28,7 +28,7 @@ local DEFAULTS = {
     confidence = {
         maxReportAge = 5,
         maxSurfaces = 17,
-        maxConnections = 136,
+        maxConnections = 16,
         maxUnobservedSectors = 16,
         ageWeight = 0.4,
         coverageWeight = 0.6,
@@ -39,7 +39,7 @@ local DEFAULTS = {
     route = {
         maxReportAge = 5,
         maxSurfaces = 17,
-        maxConnections = 136,
+        maxConnections = 16,
         maxRoutes = 3,
         verticalWeight = 1.25,
         uncertaintyPenalty = 8,
@@ -66,13 +66,23 @@ local function cloneValue(value)
 end
 
 local function mergeKnown(target, source, path)
-    assert(type(source) == "table", path .. " must be a table")
+    assert(type(target) == "table", path .. " target must be a table")
+    assert(type(source) == "table", path .. " source must be a table")
     for key, value in pairs(source) do
-        assert(target[key] ~= nil, "unknown configuration key: " .. path .. "." .. tostring(key))
-        if type(target[key]) == "table" then
-            mergeKnown(target[key], value, path .. "." .. tostring(key))
+        local current = rawget(target, key)
+        if current == nil then
+            error("unknown configuration key: " .. path .. "." .. tostring(key), 2)
+        end
+        if type(current) == "table" then
+            if type(value) ~= "table" then
+                error(path .. "." .. tostring(key) .. " must be a table", 2)
+            end
+            mergeKnown(current, value, path .. "." .. tostring(key))
         else
-            target[key] = value
+            if type(value) ~= type(current) then
+                error(path .. "." .. tostring(key) .. " must be " .. type(current), 2)
+            end
+            rawset(target, key, value)
         end
     end
 end
