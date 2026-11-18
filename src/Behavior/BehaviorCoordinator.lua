@@ -189,7 +189,8 @@ function BehaviorCoordinator:GetStatus()
 end
 
 function BehaviorCoordinator:Process(
-    escapeCandidates
+    escapeCandidates,
+    escapeCandidateProvider
 )
     if self._destroyed then
         return nil, "Destroyed"
@@ -271,12 +272,47 @@ function BehaviorCoordinator:Process(
     end
 
     -- Stage 4A: Escape requires destination evaluation.
+    -- Candidate generation is deferred until a fresh threat decision
+    -- has produced a valid Escape proposal.
     if decision.mode == "Escape" then
+        local resolvedEscapeCandidates = escapeCandidates
+
+        if escapeCandidateProvider ~= nil then
+            if type(escapeCandidateProvider) ~= "function" then
+                result.status = "ArenaCandidateBuildFailed"
+                result.reason = "InvalidCandidateProvider"
+
+                self._latest = result
+                return copyRecord(result), result.reason
+            end
+
+            local candidateOk, candidates, candidateStatus, candidatePacket =
+                pcall(escapeCandidateProvider)
+
+            if not candidateOk then
+                result.status = "ArenaCandidateBuildFailed"
+                result.reason = tostring(candidates)
+
+                self._latest = result
+                return copyRecord(result), result.reason
+            end
+
+            if type(candidates) ~= "table" then
+                result.status = "ArenaCandidateBuildFailed"
+                result.reason = candidateStatus or "NoEscapeCandidates"
+
+                self._latest = result
+                return copyRecord(result), result.reason
+            end
+
+            resolvedEscapeCandidates = candidates
+        end
+
         local evaluationOk, evaluation, evaluationReason =
             pcall(function()
                 return self.EscapeDestinationEvaluator:Evaluate(
                     decision,
-                    escapeCandidates
+                    resolvedEscapeCandidates
                 )
             end)
 
