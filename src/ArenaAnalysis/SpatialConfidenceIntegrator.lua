@@ -31,7 +31,8 @@ local function validateOptions(options)
     local result = {
         maxReportAge = options.maxReportAge or 5,
         maxSurfaces = options.maxSurfaces or 17,
-        maxConnections = options.maxConnections or 136,
+        -- [A] Updated default maxConnections to 16
+        maxConnections = options.maxConnections or 16,
         maxUnobservedSectors = options.maxUnobservedSectors or 16,
         ageWeight = options.ageWeight or 0.4,
         coverageWeight = options.coverageWeight or 0.6,
@@ -45,9 +46,10 @@ local function validateOptions(options)
     assert(isFiniteNumber(result.maxSurfaces) and result.maxSurfaces % 1 == 0
         and result.maxSurfaces >= 1 and result.maxSurfaces <= 17,
         "maxSurfaces must be an integer from 1 to 17")
+    -- [B] Updated validation limit and error message for maxConnections (0 to 16)
     assert(isFiniteNumber(result.maxConnections) and result.maxConnections % 1 == 0
-        and result.maxConnections >= 0 and result.maxConnections <= 136,
-        "maxConnections must be an integer from 0 to 136")
+        and result.maxConnections >= 0 and result.maxConnections <= 16,
+        "maxConnections must be an integer from 0 to 16")
     assert(isFiniteNumber(result.maxUnobservedSectors) and result.maxUnobservedSectors % 1 == 0
         and result.maxUnobservedSectors >= 1 and result.maxUnobservedSectors <= 16,
         "maxUnobservedSectors must be an integer from 1 to 16")
@@ -71,9 +73,13 @@ local function validateReport(report, options, now)
         or not isFiniteNumber(report.sourceAge) then
         return false, "InvalidReportTimestamp"
     end
+    -- [C] Added required checks for expectedSectorCount, blockedSectorCount, and unverifiedConnectionSectorCount
     if type(report.surfaces) ~= "table" or type(report.connections) ~= "table"
         or not isFiniteNumber(report.surfaceCount) or not isFiniteNumber(report.connectionCount)
-        or not isFiniteNumber(report.unobservedSectorCount) then
+        or not isFiniteNumber(report.unobservedSectorCount)
+        or not isFiniteNumber(report.expectedSectorCount)
+        or not isFiniteNumber(report.blockedSectorCount)
+        or not isFiniteNumber(report.unverifiedConnectionSectorCount) then
         return false, "InvalidReportShape"
     end
     if report.surfaceCount < 0 or report.surfaceCount > options.maxSurfaces
@@ -87,6 +93,20 @@ local function validateReport(report, options, now)
     if report.unobservedSectorCount < 0
         or report.unobservedSectorCount > options.maxUnobservedSectors
         or report.unobservedSectorCount % 1 ~= 0 then
+        return false, "InvalidCoverageCount"
+    end
+
+    -- [C] Added structural validation logic for sector counts
+    if report.expectedSectorCount < 4 or report.expectedSectorCount > 16 or report.expectedSectorCount % 1 ~= 0 then
+        return false, "InvalidExpectedSectorCount"
+    end
+    if report.blockedSectorCount < 0 or report.blockedSectorCount > report.expectedSectorCount or report.blockedSectorCount % 1 ~= 0 then
+        return false, "InvalidBlockedSectorCount"
+    end
+    if report.unverifiedConnectionSectorCount < 0 or report.unverifiedConnectionSectorCount > report.expectedSectorCount or report.unverifiedConnectionSectorCount % 1 ~= 0 then
+        return false, "InvalidUnverifiedSectorCount"
+    end
+    if report.unobservedSectorCount > report.expectedSectorCount then
         return false, "InvalidCoverageCount"
     end
 
@@ -159,7 +179,12 @@ function SpatialConfidenceIntegrator:Integrate(report, stores, now)
     local options = self._options
 
     local ageUncertainty = clamp01(reportAge / options.maxReportAge)
-    local coverageUncertainty = clamp01(report.unobservedSectorCount / options.maxUnobservedSectors)
+    
+    -- [D] Replaced coverageUncertainty calculation using report metrics and expectedSectorCount
+    local coverageUncertainty = clamp01(
+        (report.unobservedSectorCount + report.unverifiedConnectionSectorCount) / report.expectedSectorCount
+    )
+
     local overallUncertainty = clamp01(
         ageUncertainty * options.ageWeight
         + coverageUncertainty * options.coverageWeight
