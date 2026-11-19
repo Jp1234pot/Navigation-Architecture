@@ -617,8 +617,6 @@ function BehaviorRouteCoordinator:AcceptPathResult(pathPacket)
     if self._requesting and self._requestId == nil then
         if pathPacket.status == "Computing" then
             self._requestId = pathPacket.requestId
-            -- Fix 3: Handle early computing status update properly
-            self:_emit("Computing", "PathComputationInProgress")
             return true, "Computing"
         end
 
@@ -688,44 +686,90 @@ function BehaviorRouteCoordinator:Cancel(reason)
         return false, "Destroyed"
     end
 
-    if self._status ~= "Computing"
-        and self._status ~= "RouteReady"
-        and self._status ~= "Moving" then
+    local movementActive = false
+
+    if self.MovementController then
+        local statusOk, movementStatus = pcall(function()
+            return self.MovementController:GetStatus()
+        end)
+
+        movementActive = statusOk
+            and type(movementStatus) == "table"
+            and movementStatus.status == "Moving"
+    end
+
+    local routeActive = self._status == "Requesting"
+        or self._status == "Computing"
+        or self._status == "RouteReady"
+        or self._status == "Moving"
+
+    if not routeActive and not self._requesting and not movementActive then
         return false, "NoActiveRoute"
     end
 
-    if self._status == "Moving"
-        and self.MovementController then
+    local cancelReason = reason or "RouteCancelled"
+    local cancelledRequestId = self._requestId
+
+    if self._requesting then
+        self._cancelledDuringRequest = true
+    end
+
+    if self._status == "Computing" or self._requesting then
         pcall(function()
-            self.MovementController:Stop(
-                reason or "RouteCancelled"
-            )
+            self.PathfindingEngine:Cancel(cancelReason)
         end)
     end
 
-    if self._status == "Computing" then
-        pcall(function()
-            self.PathfindingEngine:Cancel(
-                reason or "RouteCancelled"
-            )
-        end)
+    if movementActive or self._status == "Moving" then
+        if self.MovementController then
+            pcall(function()
+                self.MovementController:Stop(cancelReason)
+            end)
+        end
     end
 
-    self.WaypointTracker:Reset(
-        reason or "RouteCancelled"
-    )
+    self.WaypointTracker:Reset(cancelReason)
 
     self._requestId = nil
     self._destination = nil
     self._mode = nil
     self._earlyPacket = nil
 
-    self:_emit(
-        "Cancelled",
-        reason or "RouteCancelled"
-    )
+    self:_emit("Cancelled", cancelReason, {
+        cancelledRequestId = cancelledRequestId,
+    })
 
     return true, "Cancelled"
+end
+
+function BehaviorRouteCoordinator:Reset(reason)
+    if self._destroyed then
+        return false, "Destroyed"
+    end
+
+    local resetReason = reason or "Reset"
+    local cancelled, cancelReason = self:Cancel(resetReason)
+
+    if not cancelled and cancelReason ~= "NoActiveRoute" then
+        return false, cancelReason
+    end
+
+    local trackerOk, trackerReason = self.WaypointTracker:Reset(resetReason)
+
+    if not trackerOk then
+        return false, trackerReason
+    end
+
+    self._requestId = nil
+    self._destination = nil
+    self._mode = nil
+    self._earlyPacket = nil
+    self._status = "Idle"
+    self._reason = resetReason
+
+    self:_emit("Idle", resetReason)
+
+    return true, "Reset"
 end
 
 function BehaviorRouteCoordinator:Destroy()
@@ -733,9 +777,14 @@ function BehaviorRouteCoordinator:Destroy()
         return
     end
 
-    if self._status == "Moving"
-        or self._status == "Computing" then
-        self:Cancel("CoordinatorDestroyed")
+    self:Reset("CoordinatorDestroyed")
+
+    if self.MovementController then
+        pcall(function()
+            self.MovementController:SetOnStatus(
+                self._previousMovementStatusCallback
+            )
+        end)
     end
 
     self._onStatus = nil
@@ -743,6 +792,8 @@ function BehaviorRouteCoordinator:Destroy()
     self._destination = nil
     self._mode = nil
     self._earlyPacket = nil
+    self._previousMovementStatusCallback = nil
+    self._movementStatusCallback = nil
 
     self.Config = nil
     self.PathfindingEngine = nil
