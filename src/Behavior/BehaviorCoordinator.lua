@@ -78,6 +78,7 @@ function BehaviorCoordinator.new(config, dependencies, options)
     assert(
         hasMethods(dependencies.multiThreatAnalysis, {
             "Analyze",
+            "Reset",
         }),
         "A compatible MultiThreatAnalysis is required"
     )
@@ -455,9 +456,42 @@ function BehaviorCoordinator:Reset()
 
     self._latest = nil
 
-    self.LocalRecordProvider:Reset()
-    self.BehaviorDecision:Reset()
-    self.EscapeDestinationEvaluator:Reset()
+    local resetSteps = {
+        {
+            name = "RouteCoordinator",
+            module = self.RouteCoordinator,
+        },
+        {
+            name = "MultiThreatAnalysis",
+            module = self.MultiThreatAnalysis,
+        },
+        {
+            name = "LocalRecordProvider",
+            module = self.LocalRecordProvider,
+        },
+        {
+            name = "BehaviorDecision",
+            module = self.BehaviorDecision,
+        },
+        {
+            name = "EscapeDestinationEvaluator",
+            module = self.EscapeDestinationEvaluator,
+        },
+    }
+
+    for _, step in ipairs(resetSteps) do
+        local ok, accepted, reason = pcall(function()
+            return step.module:Reset("BehaviorReset")
+        end)
+
+        if not ok then
+            return false, step.name .. "ResetError:" .. tostring(accepted)
+        end
+
+        if accepted ~= true then
+            return false, step.name .. "ResetRejected:" .. tostring(reason)
+        end
+    end
 
     return true, "Reset"
 end
