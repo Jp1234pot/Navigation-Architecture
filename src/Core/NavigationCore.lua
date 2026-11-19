@@ -63,7 +63,7 @@ local MODULE_INTERFACES = {
         "Record", "GetRecent", "GetSummary", "Reset", "Destroy",
     },
     MultiThreatAnalysis = {
-        "Analyze", "Destroy",
+        "Analyze", "Reset", "Destroy",
     },
     LocalRecordProvider = {
         "BuildLocalRecord", "GetLatest", "Reset", "Destroy",
@@ -84,7 +84,7 @@ local MODULE_INTERFACES = {
         "Evaluate", "GetLatest", "Reset", "Destroy",
     },
     BehaviorRouteCoordinator = {
-        "RequestRoute", "AcceptPathResult", "UpdateProgress", "Cancel", "GetStatus", "Destroy",
+        "RequestRoute", "AcceptPathResult", "UpdateProgress", "Cancel", "Reset", "SetOnStatus", "GetStatus", "Destroy",
     },
     BehaviorCoordinator = {
         "Process", "SetMode", "GetLatest", "GetStatus", "AcceptPathResult", "UpdateProgress", "Cancel", "Reset", "Destroy",
