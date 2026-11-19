@@ -151,6 +151,7 @@ local function validateDependencies(dependencies)
     assert(
         movementController == nil
             or hasMethods(movementController, {
+                "SetOnStatus",
                 "Start",
                 "Stop",
                 "GetStatus",
@@ -475,9 +476,20 @@ function BehaviorComposition:Reset()
         return false, "Destroyed"
     end
 
-    self.BehaviorCoordinator:Reset()
-    self.ArenaEscapeCandidateAdapter:Reset()
-    self.ArenaAnalysisPipeline:ClearLatest()
+    local behaviorOk, behaviorReason = self.BehaviorCoordinator:Reset()
+    if not behaviorOk then
+        return false, behaviorReason
+    end
+
+    local adapterOk, adapterReason = self.ArenaEscapeCandidateAdapter:Reset()
+    if not adapterOk then
+        return false, adapterReason
+    end
+
+    local pipelineOk, pipelineReason = self.ArenaAnalysisPipeline:ClearLatest()
+    if not pipelineOk then
+        return false, pipelineReason
+    end
 
     return true, "Reset"
 end
