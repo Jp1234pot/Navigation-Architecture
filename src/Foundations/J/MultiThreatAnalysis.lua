@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Foundation J: MultiThreatAnalysis
 -- Client-only, read-only, bounded proximity and trajectory assessment.
@@ -561,6 +560,21 @@ function MultiThreatAnalysis:Analyze(localRecord)
 	end
 
 	return nil, "Destroyed"
+end
+
+function MultiThreatAnalysis:Reset()
+	if self._destroyed then
+		return false, "Destroyed"
+	end
+
+	self._nextStartIndex.Player = 1
+	self._nextStartIndex.NPC = 1
+	self._lastAnalysisAt = nil
+
+	-- VelocityEstimator is shared with other client systems.
+	-- Do not reset its shared state here.
+
+	return true, "Reset"
 end
 
 function MultiThreatAnalysis:Destroy()
