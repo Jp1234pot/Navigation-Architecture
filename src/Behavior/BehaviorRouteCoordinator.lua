@@ -131,7 +131,10 @@ function BehaviorRouteCoordinator.new(config, dependencies, options)
     assert(
         movementController == nil
             or hasMethods(movementController, {
-                "Start", "Stop", "GetStatus",
+                "SetOnStatus",
+                "Start",
+                "Stop",
+                "GetStatus",
             }),
         "movementController must be compatible or nil"
     )
@@ -140,6 +143,15 @@ function BehaviorRouteCoordinator.new(config, dependencies, options)
 
     assert(type(options) == "table",
         "options must be a table")
+
+    local previousMovementStatusCallback =
+        options.previousMovementStatusCallback
+
+    assert(
+        previousMovementStatusCallback == nil
+            or type(previousMovementStatusCallback) == "function",
+        "previousMovementStatusCallback must be a function or nil"
+    )
 
     local maxDecisionAge =
         options.maxDecisionAge
@@ -152,7 +164,7 @@ function BehaviorRouteCoordinator.new(config, dependencies, options)
         "maxDecisionAge must be positive"
     )
 
-    return setmetatable({
+    local self = setmetatable({
         Config = config,
 
         PathfindingEngine = dependencies.pathfindingEngine,
@@ -170,10 +182,42 @@ function BehaviorRouteCoordinator.new(config, dependencies, options)
 
         _requesting = false,
         _earlyPacket = nil,
+        _cancelledDuringRequest = false,
 
         _onStatus = nil,
+        _previousMovementStatusCallback =
+            previousMovementStatusCallback,
+        _movementStatusCallback = nil,
+
         _destroyed = false,
     }, BehaviorRouteCoordinator)
+
+    if movementController then
+        local movementStatusCallback = function(packet)
+            if not self._destroyed then
+                self:_handleMovementStatus(packet)
+            end
+
+            if previousMovementStatusCallback then
+                pcall(previousMovementStatusCallback, packet)
+            end
+        end
+
+        local accepted, reason =
+            movementController:SetOnStatus(movementStatusCallback)
+
+        if not accepted then
+            error(
+                "Could not connect MovementController status: "
+                    .. tostring(reason),
+                2
+            )
+        end
+
+        self._movementStatusCallback = movementStatusCallback
+    end
+
+    return self
 end
 
 function BehaviorRouteCoordinator:_emit(status, reason, extra)
@@ -208,6 +252,60 @@ function BehaviorRouteCoordinator:_emit(status, reason, extra)
             )
         end
     end
+end
+
+function BehaviorRouteCoordinator:_handleMovementStatus(packet)
+    if self._destroyed then
+        return false, "Destroyed"
+    end
+
+    if type(packet) ~= "table"
+        or packet.requestId ~= self._requestId then
+        return false, "StaleMovementStatus"
+    end
+
+    local status = packet.status
+    local extra = {
+        movementStatus = status,
+        movementReason = packet.reason,
+    }
+
+    if status == "Moving" then
+        self:_emit(
+            "Moving",
+            packet.reason or "MovementInProgress",
+            extra
+        )
+
+    elseif status == "Completed" then
+        self.WaypointTracker:Reset("MovementCompleted")
+
+        self:_emit(
+            "Completed",
+            packet.reason or "MovementCompleted",
+            extra
+        )
+
+    elseif status == "Failed" then
+        self.WaypointTracker:Reset("MovementFailed")
+
+        self:_emit(
+            "MovementFailed",
+            packet.reason or "MovementFailed",
+            extra
+        )
+
+    elseif status == "Stopped" then
+        self.WaypointTracker:Reset("MovementStopped")
+
+        self:_emit(
+            "MovementStopped",
+            packet.reason or "MovementStopped",
+            extra
+        )
+    end
+
+    return true, "OK"
 end
 
 function BehaviorRouteCoordinator:SetOnStatus(callbackOrNil)
@@ -309,7 +407,8 @@ function BehaviorRouteCoordinator:RequestRoute(
         return false, nil, "PathfindingDisabled"
     end
 
-    if self._status == "Computing"
+    if self._status == "Requesting"
+        or self._status == "Computing"
         or self._status == "RouteReady"
         or self._status == "Moving" then
         return false, nil, "RouteAlreadyActive"
@@ -377,9 +476,10 @@ function BehaviorRouteCoordinator:RequestRoute(
     self._mode = decision.mode
     self._destination = destination
     self._requestId = nil
+    self._cancelledDuringRequest = false
     self._requesting = true
     self._earlyPacket = nil
-    
+
     -- Fix 1: Track internal requesting/submitting state
     self._status = "Requesting"
     self._reason = "SubmittingPathRequest"
@@ -391,6 +491,14 @@ function BehaviorRouteCoordinator:RequestRoute(
         )
 
     self._requesting = false
+
+    if self._cancelledDuringRequest then
+        self._cancelledDuringRequest = false
+        self._earlyPacket = nil
+        self._requestId = nil
+
+        return false, nil, "CancelledDuringSubmission"
+    end
 
     if not requestOk then
         self._earlyPacket = nil
@@ -414,6 +522,11 @@ function BehaviorRouteCoordinator:RequestRoute(
     if earlyPacket
         and earlyPacket.requestId == requestId then
         self:AcceptPathResult(earlyPacket)
+    end
+
+    if self._requestId ~= requestId then
+        self._earlyPacket = nil
+        return false, nil, "CancelledDuringSubmission"
     end
 
     return true, requestId, requestReason
