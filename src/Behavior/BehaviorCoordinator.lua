@@ -205,6 +205,9 @@ function BehaviorCoordinator:Process(
         return nil, "ThreatAnalysisDisabled"
     end
 
+    local processingStartedAt = os.clock()
+    self._latest = nil
+
     -- Stage 1: build a fresh local observation record.
     local recordOk, localRecord, recordReason = pcall(function()
         return self.LocalRecordProvider:BuildLocalRecord()
@@ -228,6 +231,36 @@ function BehaviorCoordinator:Process(
     end
 
     if type(analysisPacket) ~= "table" then
+        if analysisReason == "RateLimited" then
+            local currentMode = self.BehaviorDecision:GetMode()
+            local completedAt = os.clock()
+
+            local skippedResult = {
+                status = "ProcessingSkipped",
+                reason = "RateLimited",
+                stage = "ThreatAnalysis",
+
+                mode = currentMode,
+
+                localRecordTimestamp = localRecord.timestamp,
+                localSnapshotTimestamp =
+                    localRecord.snapshot.timestamp,
+
+                processingStartedAt = processingStartedAt,
+                completedAt = completedAt,
+                processingDuration =
+                    completedAt - processingStartedAt,
+
+                routeRequested = false,
+                routeRequestId = nil,
+                timestamp = completedAt,
+            }
+
+            self._latest = skippedResult
+
+            return copyRecord(skippedResult), "RateLimited"
+        end
+
         return nil, analysisReason or "AnalysisUnavailable"
     end
 
@@ -353,6 +386,169 @@ function BehaviorCoordinator:Process(
 
             result.status = "ProvisionalRouteBlocked"
             result.reason = "ProvisionalEscapeRequiresApproval"
+
+            self._latest = result
+
+            return copyRecord(result), result.reason
+        end
+
+        if evaluation.status ~= "DestinationEvaluated"
+            and evaluation.status ~= "ProvisionalDestination" then
+
+            result.status = "InvalidDestinationEvaluation"
+            result.reason = "UnsupportedEvaluationStatus"
+
+            self._latest = result
+
+            return copyRecord(result), result.reason
+        end
+
+        -- Stage 5: submit the selected Escape destination.
+        local accepted, requestId, routeReason =
+            self.RouteCoordinator:RequestRoute(
+                decision,
+                evaluation.destination
+            )
+
+        result.routeRequested = accepted == true
+        result.routeRequestId = requestId
+
+        if accepted then
+            result.status = "RouteRequested"
+            result.reason = routeReason or "OK"
+        else
+            result.status = "RouteRequestRejected"
+            result.reason = routeReason or "UnknownRouteError"
+        end
+
+        self._latest = result
+
+        return copyRecord(result), result.reason
+    end
+
+    -- Stage 4B: Pursue uses the priority candidate already selected
+    -- and validated by BehaviorDecision.
+    if decision.mode == "Pursue" then
+        local accepted, requestId, routeReason =
+            self.RouteCoordinator:RequestRoute(decision)
+
+        result.routeRequested = accepted == true
+        result.routeRequestId = requestId
+
+        if accepted then
+            result.status = "RouteRequested"
+            result.reason = routeReason or "OK"
+        else
+            result.status = "RouteRequestRejected"
+            result.reason = routeReason or "UnknownRouteError"
+        end
+
+        self._latest = result
+
+        return copyRecord(result), result.reason
+    end
+
+    result.status = "UnsupportedBehaviorMode"
+    result.reason = "UnsupportedBehaviorMode"
+
+    self._latest = result
+
+    return copyRecord(result), result.reason
+end
+
+-- The owner of PathfindingEngine must forward its SetOnResult
+-- packets here. This coordinator does not replace existing callbacks.
+function BehaviorCoordinator:AcceptPathResult(packet)
+    if self._destroyed then
+        return false, "Destroyed"
+    end
+
+    return self.RouteCoordinator:AcceptPathResult(packet)
+end
+
+function BehaviorCoordinator:UpdateProgress()
+    if self._destroyed then
+        return nil, "Destroyed"
+    end
+
+    return self.RouteCoordinator:UpdateProgress()
+end
+
+function BehaviorCoordinator:Cancel(reason)
+    if self._destroyed then
+        return false, "Destroyed"
+    end
+
+    return self.RouteCoordinator:Cancel(reason)
+end
+
+function BehaviorCoordinator:Reset()
+    if self._destroyed then
+        return false, "Destroyed"
+    end
+
+    self._latest = nil
+
+    local resetSteps = {
+        {
+            name = "RouteCoordinator",
+            module = self.RouteCoordinator,
+        },
+        {
+            name = "MultiThreatAnalysis",
+            module = self.MultiThreatAnalysis,
+        },
+        {
+            name = "LocalRecordProvider",
+            module = self.LocalRecordProvider,
+        },
+        {
+            name = "BehaviorDecision",
+            module = self.BehaviorDecision,
+        },
+        {
+            name = "EscapeDestinationEvaluator",
+            module = self.EscapeDestinationEvaluator,
+        },
+    }
+
+    for _, step in ipairs(resetSteps) do
+        local ok, accepted, reason = pcall(function()
+            return step.module:Reset("BehaviorReset")
+        end)
+
+        if not ok then
+            return false, step.name .. "ResetError:" .. tostring(accepted)
+        end
+
+        if accepted ~= true then
+            return false, step.name .. "ResetRejected:" .. tostring(reason)
+        end
+    end
+
+    return true, "Reset"
+end
+
+function BehaviorCoordinator:Destroy()
+    if self._destroyed then
+        return
+    end
+
+    -- Dependencies are injected and remain caller-owned.
+    self._latest = nil
+
+    self.Config = nil
+    self.LocalRecordProvider = nil
+    self.MultiThreatAnalysis = nil
+    self.BehaviorDecision = nil
+    self.EscapeDestinationEvaluator = nil
+    self.RouteCoordinator = nil
+
+    self._destroyed = true
+end
+
+return BehaviorCoordinator
+nalEscapeRequiresApproval"
 
             self._latest = result
 
