@@ -549,7 +549,30 @@ function BehaviorComposition:Destroy()
 			and readReason == "OK"
 			and currentCallback == self._pathResultCallback then
 
-			    self._destroyed = true
+			pcall(function()
+				self.PathfindingEngine:SetOnResult(
+					self._previousPathResultCallback
+				)
+			end)
+		end
+	end
+
+	self._pathResultCallback = nil
+	self._previousPathResultCallback = nil
+
+	destroyOwned(self._owned)
+
+	self.Config = nil
+	self.ArenaAnalysisPipeline = nil
+	self.ArenaEscapeCandidateAdapter = nil
+	self.LocalRecordProvider = nil
+	self.MultiThreatAnalysis = nil
+	self.BehaviorDecision = nil
+	self.EscapeDestinationEvaluator = nil
+	self.BehaviorRouteCoordinator = nil
+	self.BehaviorCoordinator = nil
+	self.PathfindingEngine = nil
+	self._stores = nil
 end
 
-return BehaviorCoordinator
+return BehaviorComposition
