@@ -20,7 +20,9 @@ local function isFiniteNumber(value)
 end
 
 local function validateEnvelope(envelope)
-    assert(type(envelope) == "table", "movementEnvelope must be a table")
+    if type(envelope) ~= "table" then
+        return nil, "MovementEnvelopeRequired"
+    end
 
     local result = {
         maxWalkGap = envelope.maxWalkGap,
@@ -44,11 +46,15 @@ local function validateEnvelope(envelope)
 
     for key, range in pairs(bounds) do
         local value = result[key]
-        assert(isFiniteNumber(value) and value >= range[1] and value <= range[2],
-            key .. " must be a finite number from " .. range[1] .. " to " .. range[2])
+        if not isFiniteNumber(value) then
+            return nil, "InvalidMovementEnvelope:" .. key
+        end
+        if value < range[1] or value > range[2] then
+            return nil, "MovementEnvelopeOutOfRange:" .. key
+        end
     end
 
-    return result
+    return result, "OK"
 end
 
 local function validateRoute(route, maxLegs)
@@ -135,7 +141,11 @@ function MovementFeasibilityAnalyzer:Analyze(route, movementEnvelope)
         return nil, reason
     end
 
-    local envelope = validateEnvelope(movementEnvelope)
+    local envelope, envelopeReason = validateEnvelope(movementEnvelope)
+    if not envelope then
+        return nil, envelopeReason
+    end
+
     local legResults = {}
     local withinCount = 0
     local outsideCount = 0
