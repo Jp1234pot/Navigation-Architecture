@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Foundation K: UncertaintyMap
 -- Bounded, session-only grid of observation uncertainty. No world scanning or raycasts.
@@ -280,6 +279,9 @@ end
 function UncertaintyMap:GetSummary()
     if self._destroyed then
         return nil, "Destroyed"
+    end
+    if not self.Config.evidenceLedgerEnabled then
+        return nil, "Disabled"
     end
 
     local currentTime = os.clock()
