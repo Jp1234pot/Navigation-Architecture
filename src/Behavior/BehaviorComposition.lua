@@ -131,6 +131,7 @@ local function validateDependencies(dependencies)
 			"RequestPath",
 			"Cancel",
 			"SetOnResult",
+			"GetOnResult",
 		}),
 		"A compatible PathfindingEngine is required"
 	)
@@ -181,13 +182,31 @@ function BehaviorComposition.new(
 	assert(type(options) == "table",
 		"BehaviorComposition options must be a table")
 
-	local previousCallback =
-		options.previousPathResultCallback
+	local previousCallbackCallOk, previousCallback, previousCallbackReason =
+		pcall(function()
+			return dependencies.pathfindingEngine:GetOnResult()
+		end)
+
+	if not previousCallbackCallOk then
+		error(
+			"Could not read previous PathfindingEngine callback: "
+				.. tostring(previousCallback),
+			2
+		)
+	end
+
+	if previousCallbackReason ~= "OK" then
+		error(
+			"Could not read previous PathfindingEngine callback: "
+				.. tostring(previousCallbackReason),
+			2
+		)
+	end
 
 	assert(
 		previousCallback == nil
 			or type(previousCallback) == "function",
-		"previousPathResultCallback must be a function or nil"
+		"PathfindingEngine returned an invalid previous callback"
 	)
 
 	local owned = {}
@@ -519,13 +538,23 @@ function BehaviorComposition:Destroy()
 
 	self._destroyed = true
 
-	-- Restore the callback that existed before composition took ownership.
-	if self.PathfindingEngine then
-		pcall(function()
-			self.PathfindingEngine:SetOnResult(
-				self._previousPathResultCallback
-			)
+	-- Restore the previous callback only while this composition
+	-- still owns the PathfindingEngine callback slot.
+	if self.PathfindingEngine and self._pathResultCallback then
+		local readOk, currentCallback, readReason = pcall(function()
+			return self.PathfindingEngine:GetOnResult()
 		end)
+
+		if readOk
+			and readReason == "OK"
+			and currentCallback == self._pathResultCallback then
+
+			pcall(function()
+				self.PathfindingEngine:SetOnResult(
+					self._previousPathResultCallback
+				)
+			end)
+		end
 	end
 
 	-- Reverse construction order:
