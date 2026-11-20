@@ -484,20 +484,32 @@ function BehaviorRouteCoordinator:RequestRoute(
     self._status = "Requesting"
     self._reason = "SubmittingPathRequest"
 
-    local requestOk, requestId, requestReason =
-        self.PathfindingEngine:RequestPath(
+    local callOk, requestOk, requestId, requestReason = pcall(function()
+        return self.PathfindingEngine:RequestPath(
             startPosition,
             destination
         )
+    end)
 
     self._requesting = false
 
+    -- Cancellation takes precedence over submission results.
     if self._cancelledDuringRequest then
         self._cancelledDuringRequest = false
         self._earlyPacket = nil
         self._requestId = nil
 
         return false, nil, "CancelledDuringSubmission"
+    end
+
+    if not callOk then
+        self._earlyPacket = nil
+        self._requestId = nil
+
+        local failureReason = "PathRequestError:" .. tostring(requestOk)
+        self:_emit("Rejected", failureReason)
+
+        return false, nil, failureReason
     end
 
     if not requestOk then
@@ -507,6 +519,15 @@ function BehaviorRouteCoordinator:RequestRoute(
         self:_emit("Rejected", requestReason)
 
         return false, nil, requestReason
+    end
+
+    if not isFiniteNumber(requestId) then
+        self._earlyPacket = nil
+        self._requestId = nil
+
+        self:_emit("Rejected", "InvalidPathRequestId")
+
+        return false, nil, "InvalidPathRequestId"
     end
 
     self._requestId = requestId
@@ -588,17 +609,23 @@ function BehaviorRouteCoordinator:_processPathResult(pathPacket)
         self.MovementController:Start(character, pathPacket)
 
     if not started then
-        self:_emit(
-            "RouteReady",
-            "MovementStartRejected:" .. tostring(startReason)
-        )
+        if self._status == "Computing" then
+            self:_emit(
+                "RouteReady",
+                "MovementStartRejected:" .. tostring(startReason)
+            )
+        end
 
         return false, startReason
     end
 
-    self:_emit("Moving", "MovementStarted")
+    -- Start() may synchronously emit Moving or a terminal status.
+    -- Only provide a fallback transition if no callback changed the state.
+    if self._status == "Computing" then
+        self:_emit("Moving", "MovementStarted")
+    end
 
-    return true, "Moving"
+    return true, self._status
 end
 
 function BehaviorRouteCoordinator:AcceptPathResult(pathPacket)
@@ -787,23 +814,14 @@ function BehaviorRouteCoordinator:Destroy()
         end)
     end
 
-    self._onStatus = nil
-    self._requestId = nil
-    self._destination = nil
-    self._mode = nil
-    self._earlyPacket = nil
-    self._previousMovementStatusCallback = nil
-    self._movementStatusCallback = nil
-
-    self.Config = nil
     self.PathfindingEngine = nil
     self.WaypointTracker = nil
     self.CharacterManager = nil
     self.MovementController = nil
-
+    self._onStatus = nil
+    self._previousMovementStatusCallback = nil
+    self._movementStatusCallback = nil
     self._destroyed = true
-    self._status = "Destroyed"
-    self._reason = "Destroyed"
 end
 
 return BehaviorRouteCoordinator
