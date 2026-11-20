@@ -131,7 +131,6 @@ function ArenaAnalysisPipeline:Compare(startSurfaceId, goalSurfaceId, movementEn
     local feasibility = nil
     local feasibilityStatus = "NotRequested"
     local feasibilityAnalyzedCount = 0
-    local feasibilityRejectedCount = 0
     if movementEnvelope ~= nil and self._config.enableFeasibility then
         feasibility = {}
         for index, route in ipairs(comparison.routes) do
@@ -144,7 +143,6 @@ function ArenaAnalysisPipeline:Compare(startSurfaceId, goalSurfaceId, movementEn
                     status = assessmentStatus,
                 }
             else
-                feasibilityRejectedCount += 1
                 feasibility[#feasibility + 1] = {
                     routeIndex = index,
                     assessment = nil,
