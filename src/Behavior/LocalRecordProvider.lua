@@ -69,6 +69,8 @@ function LocalRecordProvider:BuildLocalRecord()
         return nil, "Destroyed"
     end
 
+    self._latest = nil
+
     local characterOk, character = pcall(function()
         return self.CharacterManager:GetCharacter()
     end)
