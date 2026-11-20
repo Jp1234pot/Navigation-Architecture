@@ -548,3 +548,8 @@ function BehaviorComposition:Destroy()
 		if readOk
 			and readReason == "OK"
 			and currentCallback == self._pathResultCallback then
+
+			    self._destroyed = true
+end
+
+return BehaviorCoordinator
