@@ -130,17 +130,21 @@ function ArenaAnalysisPipeline:Compare(startSurfaceId, goalSurfaceId, movementEn
 
     local feasibility = nil
     local feasibilityStatus = "NotRequested"
+    local feasibilityAnalyzedCount = 0
+    local feasibilityRejectedCount = 0
     if movementEnvelope ~= nil and self._config.enableFeasibility then
         feasibility = {}
         for index, route in ipairs(comparison.routes) do
             local assessment, assessmentStatus = self._feasibility:Analyze(route, movementEnvelope)
             if assessment then
+                feasibilityAnalyzedCount += 1
                 feasibility[#feasibility + 1] = {
                     routeIndex = index,
                     assessment = assessment,
                     status = assessmentStatus,
                 }
             else
+                feasibilityRejectedCount += 1
                 feasibility[#feasibility + 1] = {
                     routeIndex = index,
                     assessment = nil,
@@ -148,7 +152,16 @@ function ArenaAnalysisPipeline:Compare(startSurfaceId, goalSurfaceId, movementEn
                 }
             end
         end
-        feasibilityStatus = "Analyzed"
+        local routeCount = #comparison.routes
+        if routeCount == 0 then
+            feasibilityStatus = "NoRoutes"
+        elseif feasibilityAnalyzedCount == routeCount then
+            feasibilityStatus = "Analyzed"
+        elseif feasibilityAnalyzedCount > 0 then
+            feasibilityStatus = "PartiallyAnalyzed"
+        else
+            feasibilityStatus = "Rejected"
+        end
     elseif movementEnvelope ~= nil then
         feasibilityStatus = "Disabled"
     end
@@ -167,7 +180,7 @@ function ArenaAnalysisPipeline:Compare(startSurfaceId, goalSurfaceId, movementEn
             routeSearchIsExhaustive = comparison.isExhaustive == true,
             movementWasExecuted = false,
             physicalReachabilityGuaranteed = false,
-            feasibilityIsHeuristic = feasibility ~= nil,
+            feasibilityIsHeuristic = feasibilityAnalyzedCount > 0,
         },
     }, compareStatus
 end
