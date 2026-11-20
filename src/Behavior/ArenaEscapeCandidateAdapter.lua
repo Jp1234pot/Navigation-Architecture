@@ -160,10 +160,15 @@ end
 --   2. Have at least one route passing the supplied L5 envelope.
 --
 -- The movement envelope must come from the caller.
-function ArenaEscapeCandidateAdapter:BuildCandidates(movementEnvelope, stores)
+function ArenaEscapeCandidateAdapter:BuildCandidates(
+    movementEnvelope,
+    stores
+)
     if self._destroyed then
         return nil, "Destroyed"
     end
+
+    self._latest = nil
 
     if type(movementEnvelope) ~= "table" then
         return nil, "MovementEnvelopeRequired"
