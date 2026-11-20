@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Module: MovementController
 -- Foundation H: explicit, bounded, client-side waypoint execution.
@@ -547,6 +546,12 @@ function MovementController:Start(character, pathPacket)
 
     if type(pathPacket) ~= "table" or pathPacket.status ~= "Success" then
         return false, "PathNotSuccessful"
+    end
+
+    local requestId = pathPacket.requestId
+
+    if not isFiniteInteger(requestId) or requestId < 1 then
+        return false, "InvalidRequestId"
     end
 
     if not isModel(character) then
