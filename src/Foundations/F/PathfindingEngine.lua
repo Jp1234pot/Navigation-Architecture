@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Module: PathfindingEngine
 -- Foundation F: explicit client-side path computation, with no movement control.
@@ -22,9 +21,39 @@ local function isFiniteVector3(value)
         and isFiniteNumber(value.Z)
 end
 
-local function copyWaypoints(waypoints)
-    local result = {}
-    for index, waypoint in ipairs(waypoints) do
+local function getDenseArrayLength(array, maximum)
+    local count = 0
+    local highestIndex = 0
+
+    for key in pairs(array) do
+        if type(key) ~= "number"
+            or not isFiniteNumber(key)
+            or key % 1 ~= 0
+            or key < 1 then
+            return nil, "InvalidWaypointArray"
+        end
+
+        if key > maximum then
+            return nil, "WaypointLimitExceeded"
+        end
+
+        count += 1
+        highestIndex = math.max(highestIndex, key)
+    end
+
+    if count ~= highestIndex then
+        return nil, "InvalidWaypointArray"
+    end
+
+    return count, "OK"
+end
+
+local function copyWaypoints(waypoints, waypointCount)
+    local result = table.create(waypointCount)
+
+    for index = 1, waypointCount do
+        local waypoint = waypoints[index]
+
         result[index] = {
             index = index,
             position = waypoint.Position,
@@ -32,6 +61,7 @@ local function copyWaypoints(waypoints)
             label = waypoint.Label,
         }
     end
+
     return result
 end
 
@@ -282,13 +312,93 @@ function PathfindingEngine:RequestPath(startPosition, finishPosition)
         local waypointSuccess, rawWaypoints = pcall(function()
             return path:GetWaypoints()
         end)
-        if not waypointSuccess or type(rawWaypoints) ~= "table" or #rawWaypoints == 0 then
-            pcall(function() path:Destroy() end)
-            self:_completeFailure(requestId, startPosition, finishPosition, "WaypointReadFailedOrEmpty", waypointSuccess and nil or tostring(rawWaypoints))
+
+        if not waypointSuccess or type(rawWaypoints) ~= "table" then
+            pcall(function()
+                path:Destroy()
+            end)
+
+            self:_completeFailure(
+                requestId,
+                startPosition,
+                finishPosition,
+                "WaypointReadFailed",
+                waypointSuccess and "InvalidWaypointArray" or tostring(rawWaypoints)
+            )
             return
         end
 
-        local waypoints = copyWaypoints(rawWaypoints)
+        local maximum = self.Config.maxTrackedWaypoints or 512
+
+        if not isFiniteNumber(maximum)
+            or maximum % 1 ~= 0
+            or maximum < 1 then
+            pcall(function()
+                path:Destroy()
+            end)
+
+            self:_completeFailure(
+                requestId,
+                startPosition,
+                finishPosition,
+                "InvalidWaypointLimit",
+                nil
+            )
+            return
+        end
+
+        local waypointCount, waypointReason =
+            getDenseArrayLength(rawWaypoints, maximum)
+
+        if waypointCount == nil then
+            pcall(function()
+                path:Destroy()
+            end)
+
+            self:_completeFailure(
+                requestId,
+                startPosition,
+                finishPosition,
+                waypointReason,
+                nil
+            )
+            return
+        end
+
+        if waypointCount == 0 then
+            pcall(function()
+                path:Destroy()
+            end)
+
+            self:_completeFailure(
+                requestId,
+                startPosition,
+                finishPosition,
+                "WaypointReadFailedOrEmpty",
+                nil
+            )
+            return
+        end
+
+        local copySuccess, waypoints = pcall(function()
+            return copyWaypoints(rawWaypoints, waypointCount)
+        end)
+
+        if not copySuccess then
+            pcall(function()
+                path:Destroy()
+            end)
+
+            self:_completeFailure(
+                requestId,
+                startPosition,
+                finishPosition,
+                "WaypointCopyFailed",
+                tostring(waypoints)
+            )
+            return
+        end
+
         self._activePath = path
 
         local blockedConnectSuccess, blockedConnectionOrError = pcall(function()
@@ -325,6 +435,93 @@ function PathfindingEngine:RequestPath(startPosition, finishPosition)
         local unblockedConnectSuccess, unblockedConnectionOrError = pcall(function()
             return path.Unblocked:Connect(function(unblockedWaypointIndex)
                 if self._destroyed or requestId ~= self._generation or self._activePath ~= path then
+                    return
+                end
+                self:_emit(self._onUnblocked, {
+                    requestId = requestId,
+                    unblockedWaypointIndex = unblockedWaypointIndex,
+                    timestamp = os.clock(),
+                }, "unblocked")
+            end)
+        end)
+
+        if not unblockedConnectSuccess then
+            pcall(function()
+                blockedConnection:Disconnect()
+            end)
+
+            self._activePath = nil
+            pcall(function()
+                path:Destroy()
+            end)
+            self:_completeFailure(
+                requestId,
+                startPosition,
+                finishPosition,
+                "UnblockedConnectionFailed",
+                tostring(unblockedConnectionOrError)
+            )
+            return
+        end
+
+        local unblockedConnection = unblockedConnectionOrError
+
+        table.insert(self._activeConnections, blockedConnection)
+        table.insert(self._activeConnections, unblockedConnection)
+
+        self:_publish({
+            requestId = requestId,
+            status = "Success",
+            startPosition = startPosition,
+            finishPosition = finishPosition,
+            requestedAt = self._lastRequestAt,
+            completedAt = os.clock(),
+            waypoints = waypoints,
+        })
+    end)
+
+    return true, requestId, "Queued"
+end
+
+function PathfindingEngine:Cancel(reason)
+    if self._destroyed then
+        return false, "Destroyed"
+    end
+
+    self._generation = self._generation + 1
+    self:_disconnectActivePath()
+    self:_publish({
+        requestId = self._generation,
+        status = "Cancelled",
+        detail = reason or "CancelledByCaller",
+        timestamp = os.clock(),
+        waypoints = {},
+    })
+    return true, "Cancelled"
+end
+
+function PathfindingEngine:GetLatest()
+    return copyPacket(self._latest)
+end
+
+function PathfindingEngine:Destroy()
+    if self._destroyed then
+        return
+    end
+
+    self._destroyed = true
+    self._generation = self._generation + 1
+    self:_disconnectActivePath()
+    self._latest = nil
+    self._onResult = nil
+    self._onBlocked = nil
+    self._onUnblocked = nil
+    -- In-flight ComputeAsync calls cannot be interrupted. Their results are
+    -- invalidated by the generation token and their Path is destroyed on return.
+end
+
+return PathfindingEngine
+_generation or self._activePath ~= path then
                     return
                 end
                 self:_emit(self._onUnblocked, {
