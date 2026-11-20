@@ -407,13 +407,6 @@ function MultiThreatAnalysis:Analyze(localRecord)
 										if candidateCount <= config.maxThreatCandidates
 											and candidateCount <= inspectedCount then
 
-											if rotationWindowCount > 0 then
-												self._nextStartIndex[mode] =
-													((startIndex - 1 + math.max(inspectedCount, 1)) % rotationWindowCount) + 1
-											else
-												self._nextStartIndex[mode] = 1
-											end
-
 											-- Discovery may take time. Revalidate the local
 											-- snapshot before starting candidate assessment.
 											local discoveryNow = os.clock()
@@ -526,6 +519,13 @@ function MultiThreatAnalysis:Analyze(localRecord)
 												velocityNote = "Velocity uses fresh position-derived estimates; raw AssemblyLinearVelocity is not used for remote candidates.",
 												authorityNote = "Client-side observation only; not authoritative game state.",
 											}
+
+											if rotationWindowCount > 0 then
+												self._nextStartIndex[mode] =
+													((startIndex - 1 + math.max(inspectedCount, 1)) % rotationWindowCount) + 1
+											else
+												self._nextStartIndex[mode] = 1
+											end
 
 											self:_record("BatchCompleted", analyzedCount)
 											return packet, "OK"
