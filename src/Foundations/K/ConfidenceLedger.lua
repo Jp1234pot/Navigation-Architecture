@@ -1,7 +1,6 @@
-
 -- Navigation Architecture v2.2
 -- Foundation K: ConfidenceLedger
--- Bounded, session-only evidence aggregation. No world access or automatic sampling.
+-- Bounded, session-only evidence aggregation.
 
 local ConfidenceLedger = {}
 ConfidenceLedger.__index = ConfidenceLedger
@@ -133,6 +132,7 @@ function ConfidenceLedger:Assess(subjectKey, now)
     local neutralWeight = 0
     local effectiveSamples = 0
     local directionalSamples = 0
+    local futureDatedSamples = 0
     local freshestAge = nil
     local kindCounts = {}
 
@@ -142,7 +142,10 @@ function ConfidenceLedger:Assess(subjectKey, now)
         local record = self._records[index]
         if record and record.subjectKey == subjectKey then
             local age = currentTime - record.timestamp
-            if age >= 0 and age <= self.Config.evidenceMaxAge then
+
+            if age < 0 then
+                futureDatedSamples += 1
+            elseif age >= 0 and age <= self.Config.evidenceMaxAge then
                 local freshness = 2 ^ (-age / self.Config.evidenceHalfLife)
                 local weight = record.quality * freshness
                 if weight > 0 then
@@ -196,6 +199,7 @@ function ConfidenceLedger:Assess(subjectKey, now)
         status = status,
         effectiveSamples = effectiveSamples,
         directionalSamples = directionalSamples,
+        futureDatedSamples = futureDatedSamples,
         supportingWeight = supportingWeight,
         contradictingWeight = contradictingWeight,
         neutralWeight = neutralWeight,
