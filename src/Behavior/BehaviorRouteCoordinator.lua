@@ -25,803 +25,817 @@ local BehaviorRouteCoordinator = {}
 BehaviorRouteCoordinator.__index = BehaviorRouteCoordinator
 
 local function isFiniteNumber(value)
-    return type(value) == "number"
-        and value == value
-        and value ~= math.huge
-        and value ~= -math.huge
+	return type(value) == "number"
+		and value == value
+		and value ~= math.huge
+		and value ~= -math.huge
+end
+
+local function isFiniteInteger(value)
+	return isFiniteNumber(value) and value % 1 == 0
 end
 
 local function isFiniteVector3(value)
-    return typeof(value) == "Vector3"
-        and isFiniteNumber(value.X)
-        and isFiniteNumber(value.Y)
-        and isFiniteNumber(value.Z)
+	return typeof(value) == "Vector3"
+		and isFiniteNumber(value.X)
+		and isFiniteNumber(value.Y)
+		and isFiniteNumber(value.Z)
 end
 
 local function isModel(value)
-    if typeof(value) ~= "Instance" then
-        return false
-    end
+	if typeof(value) ~= "Instance" then
+		return false
+	end
 
-    local ok, result = pcall(function()
-        return value:IsA("Model")
-    end)
+	local ok, result = pcall(function()
+		return value:IsA("Model")
+	end)
 
-    return ok and result == true
+	return ok and result == true
 end
 
 local function hasMethods(value, methods)
-    if type(value) ~= "table" then
-        return false
-    end
+	if type(value) ~= "table" then
+		return false
+	end
 
-    for _, methodName in ipairs(methods) do
-        local ok, method = pcall(function()
-            return value[methodName]
-        end)
+	for _, methodName in ipairs(methods) do
+		local ok, method = pcall(function()
+			return value[methodName]
+		end)
 
-        if not ok or type(method) ~= "function" then
-            return false
-        end
-    end
+		if not ok or type(method) ~= "function" then
+			return false
+		end
+	end
 
-    return true
+	return true
 end
 
 local function getModelRoot(model)
-    if not isModel(model) then
-        return nil
-    end
+	if not isModel(model) then
+		return nil
+	end
 
-    local ok, root = pcall(function()
-        local humanoidRoot = model:FindFirstChild("HumanoidRootPart")
+	local ok, root = pcall(function()
+		local humanoidRoot = model:FindFirstChild("HumanoidRootPart")
 
-        if humanoidRoot and humanoidRoot:IsA("BasePart") then
-            return humanoidRoot
-        end
+		if humanoidRoot and humanoidRoot:IsA("BasePart") then
+			return humanoidRoot
+		end
 
-        local primary = model.PrimaryPart
+		local primary = model.PrimaryPart
 
-        if primary and primary:IsA("BasePart") then
-            return primary
-        end
+		if primary and primary:IsA("BasePart") then
+			return primary
+		end
 
-        local torso = model:FindFirstChild("Torso")
+		local torso = model:FindFirstChild("Torso")
 
-        if torso and torso:IsA("BasePart") then
-            return torso
-        end
+		if torso and torso:IsA("BasePart") then
+			return torso
+		end
 
-        return nil
-    end)
+		return nil
+	end)
 
-    return ok and root or nil
+	return ok and root or nil
 end
 
 function BehaviorRouteCoordinator.new(config, dependencies, options)
-    assert(type(config) == "table",
-        "BehaviorRouteCoordinator requires config")
+	assert(type(config) == "table",
+		"BehaviorRouteCoordinator requires config")
 
-    assert(type(dependencies) == "table",
-        "BehaviorRouteCoordinator requires dependencies")
+	assert(type(dependencies) == "table",
+		"BehaviorRouteCoordinator requires dependencies")
 
-    assert(
-        hasMethods(dependencies.pathfindingEngine, {
-            "RequestPath", "Cancel",
-        }),
-        "A compatible PathfindingEngine is required"
-    )
+	assert(
+		hasMethods(dependencies.pathfindingEngine, {
+			"RequestPath", "Cancel",
+		}),
+		"A compatible PathfindingEngine is required"
+	)
 
-    assert(
-        hasMethods(dependencies.waypointTracker, {
-            "SetPath", "Update", "GetProgress", "Reset",
-        }),
-        "A compatible WaypointTracker is required"
-    )
+	assert(
+		hasMethods(dependencies.waypointTracker, {
+			"SetPath", "Update", "GetProgress", "Reset",
+		}),
+		"A compatible WaypointTracker is required"
+	)
 
-    assert(
-        hasMethods(dependencies.characterManager, {
-            "GetCharacter", "GetRoot",
-        }),
-        "A compatible CharacterManager is required"
-    )
+	assert(
+		hasMethods(dependencies.characterManager, {
+			"GetCharacter", "GetRoot",
+		}),
+		"A compatible CharacterManager is required"
+	)
 
-    local movementController = dependencies.movementController
+	local movementController = dependencies.movementController
 
-    assert(
-        movementController == nil
-            or hasMethods(movementController, {
-                "SetOnStatus",
-                "Start",
-                "Stop",
-                "GetStatus",
-            }),
-        "movementController must be compatible or nil"
-    )
+	assert(
+		movementController == nil
+			or hasMethods(movementController, {
+				"SetOnStatus",
+				"Start",
+				"Stop",
+				"GetStatus",
+			}),
+		"movementController must be compatible or nil"
+	)
 
-    options = options or {}
+	options = options or {}
 
-    assert(type(options) == "table",
-        "options must be a table")
+	assert(type(options) == "table",
+		"options must be a table")
 
-    local previousMovementStatusCallback =
-        options.previousMovementStatusCallback
+	local previousMovementStatusCallback =
+		options.previousMovementStatusCallback
 
-    assert(
-        previousMovementStatusCallback == nil
-            or type(previousMovementStatusCallback) == "function",
-        "previousMovementStatusCallback must be a function or nil"
-    )
+	assert(
+		previousMovementStatusCallback == nil
+			or type(previousMovementStatusCallback) == "function",
+		"previousMovementStatusCallback must be a function or nil"
+	)
 
-    local maxDecisionAge =
-        options.maxDecisionAge
-        or config.threatMaxEstimateAge
-        or 0.75
+	local maxDecisionAge =
+		options.maxDecisionAge
+		or config.threatMaxEstimateAge
+		or 0.75
 
-    assert(
-        isFiniteNumber(maxDecisionAge)
-            and maxDecisionAge > 0,
-        "maxDecisionAge must be positive"
-    )
+	assert(
+		isFiniteNumber(maxDecisionAge)
+			and maxDecisionAge > 0,
+		"maxDecisionAge must be positive"
+	)
 
-    local self = setmetatable({
-        Config = config,
+	local self = setmetatable({
+		Config = config,
 
-        PathfindingEngine = dependencies.pathfindingEngine,
-        WaypointTracker = dependencies.waypointTracker,
-        CharacterManager = dependencies.characterManager,
-        MovementController = movementController,
+		PathfindingEngine = dependencies.pathfindingEngine,
+		WaypointTracker = dependencies.waypointTracker,
+		CharacterManager = dependencies.characterManager,
+		MovementController = movementController,
 
-        _maxDecisionAge = maxDecisionAge,
+		_maxDecisionAge = maxDecisionAge,
 
-        _status = "Idle",
-        _reason = "NotStarted",
-        _requestId = nil,
-        _mode = nil,
-        _destination = nil,
+		_status = "Idle",
+		_reason = "NotStarted",
+		_requestId = nil,
+		_mode = nil,
+		_destination = nil,
 
-        _requesting = false,
-        _earlyPacket = nil,
-        _cancelledDuringRequest = false,
+		_requesting = false,
+		_earlyPacket = nil,
+		_cancelledDuringRequest = false,
 
-        _onStatus = nil,
-        _previousMovementStatusCallback =
-            previousMovementStatusCallback,
-        _movementStatusCallback = nil,
+		_onStatus = nil,
+		_previousMovementStatusCallback =
+			previousMovementStatusCallback,
+		_movementStatusCallback = nil,
 
-        _destroyed = false,
-    }, BehaviorRouteCoordinator)
+		_destroyed = false,
+	}, BehaviorRouteCoordinator)
 
-    if movementController then
-        local movementStatusCallback = function(packet)
-            if not self._destroyed then
-                self:_handleMovementStatus(packet)
-            end
+	if movementController then
+		local movementStatusCallback = function(packet)
+			if not self._destroyed then
+				self:_handleMovementStatus(packet)
+			end
 
-            if previousMovementStatusCallback then
-                pcall(previousMovementStatusCallback, packet)
-            end
-        end
+			if previousMovementStatusCallback then
+				pcall(previousMovementStatusCallback, packet)
+			end
+		end
 
-        local accepted, reason =
-            movementController:SetOnStatus(movementStatusCallback)
+		local accepted, reason =
+			movementController:SetOnStatus(movementStatusCallback)
 
-        if not accepted then
-            error(
-                "Could not connect MovementController status: "
-                    .. tostring(reason),
-                2
-            )
-        end
+		if not accepted then
+			error(
+				"Could not connect MovementController status: "
+					.. tostring(reason),
+				2
+			)
+		end
 
-        self._movementStatusCallback = movementStatusCallback
-    end
+		self._movementStatusCallback = movementStatusCallback
+	end
 
-    return self
+	return self
 end
 
 function BehaviorRouteCoordinator:_emit(status, reason, extra)
-    self._status = status
-    self._reason = reason or status
+	self._status = status
+	self._reason = reason or status
 
-    local callback = self._onStatus
+	local callback = self._onStatus
 
-    if callback then
-        local packet = {
-            status = status,
-            reason = self._reason,
-            requestId = self._requestId,
-            mode = self._mode,
-            destination = self._destination,
-            timestamp = os.clock(),
-        }
+	if callback then
+		local packet = {
+			status = status,
+			reason = self._reason,
+			requestId = self._requestId,
+			mode = self._mode,
+			destination = self._destination,
+			timestamp = os.clock(),
+		}
 
-        if type(extra) == "table" then
-            for key, value in pairs(extra) do
-                packet[key] = value
-            end
-        end
+		if type(extra) == "table" then
+			for key, value in pairs(extra) do
+				packet[key] = value
+			end
+		end
 
-        local ok, err = pcall(callback, packet)
+		local ok, err = pcall(callback, packet)
 
-        if not ok then
-            warn(
-                "[Navigation v2.2] BehaviorRouteCoordinator "
-                .. "status callback failed: "
-                .. tostring(err)
-            )
-        end
-    end
+		if not ok then
+			warn(
+				"[Navigation v2.2] BehaviorRouteCoordinator "
+				.. "status callback failed: "
+				.. tostring(err)
+			)
+		end
+	end
 end
 
 function BehaviorRouteCoordinator:_handleMovementStatus(packet)
-    if self._destroyed then
-        return false, "Destroyed"
-    end
+	if self._destroyed then
+		return false, "Destroyed"
+	end
 
-    if type(packet) ~= "table"
-        or packet.requestId ~= self._requestId then
-        return false, "StaleMovementStatus"
-    end
+	if type(packet) ~= "table"
+		or packet.requestId ~= self._requestId then
+		return false, "StaleMovementStatus"
+	end
 
-    local status = packet.status
-    local extra = {
-        movementStatus = status,
-        movementReason = packet.reason,
-    }
+	local status = packet.status
+	local extra = {
+		movementStatus = status,
+		movementReason = packet.reason,
+	}
 
-    if status == "Moving" then
-        self:_emit(
-            "Moving",
-            packet.reason or "MovementInProgress",
-            extra
-        )
+	if status == "Moving" then
+		self:_emit(
+			"Moving",
+			packet.reason or "MovementInProgress",
+			extra
+		)
 
-    elseif status == "Completed" then
-        self.WaypointTracker:Reset("MovementCompleted")
+	elseif status == "Completed" then
+		self.WaypointTracker:Reset("MovementCompleted")
 
-        self:_emit(
-            "Completed",
-            packet.reason or "MovementCompleted",
-            extra
-        )
+		self:_emit(
+			"Completed",
+			packet.reason or "MovementCompleted",
+			extra
+		)
 
-    elseif status == "Failed" then
-        self.WaypointTracker:Reset("MovementFailed")
+	elseif status == "Failed" then
+		self.WaypointTracker:Reset("MovementFailed")
 
-        self:_emit(
-            "MovementFailed",
-            packet.reason or "MovementFailed",
-            extra
-        )
+		self:_emit(
+			"MovementFailed",
+			packet.reason or "MovementFailed",
+			extra
+		)
 
-    elseif status == "Stopped" then
-        self.WaypointTracker:Reset("MovementStopped")
+	elseif status == "Stopped" then
+		self.WaypointTracker:Reset("MovementStopped")
 
-        self:_emit(
-            "MovementStopped",
-            packet.reason or "MovementStopped",
-            extra
-        )
-    end
+		self:_emit(
+			"MovementStopped",
+			packet.reason or "MovementStopped",
+			extra
+		)
+	end
 
-    return true, "OK"
+	return true, "OK"
 end
 
 function BehaviorRouteCoordinator:SetOnStatus(callbackOrNil)
-    if self._destroyed then
-        return false, "Destroyed"
-    end
+	if self._destroyed then
+		return false, "Destroyed"
+	end
 
-    if callbackOrNil ~= nil
-        and type(callbackOrNil) ~= "function" then
-        return false, "CallbackMustBeFunctionOrNil"
-    end
+	if callbackOrNil ~= nil
+		and type(callbackOrNil) ~= "function" then
+		return false, "CallbackMustBeFunctionOrNil"
+	end
 
-    self._onStatus = callbackOrNil
+	self._onStatus = callbackOrNil
 
-    return true, "OK"
+	return true, "OK"
 end
 
 function BehaviorRouteCoordinator:GetStatus()
-    if self._destroyed then
-        return {
-            status = "Destroyed",
-            reason = "Destroyed",
-        }
-    end
+	if self._destroyed then
+		return {
+			status = "Destroyed",
+			reason = "Destroyed",
+		}
+	end
 
-    return {
-        status = self._status,
-        reason = self._reason,
-        requestId = self._requestId,
-        mode = self._mode,
-        destination = self._destination,
-    }
+	return {
+		status = self._status,
+		reason = self._reason,
+		requestId = self._requestId,
+		mode = self._mode,
+		destination = self._destination,
+	}
 end
 
 function BehaviorRouteCoordinator:_resolveDestination(
-    decision,
-    escapeDestination
+	decision,
+	escapeDestination
 )
-    if decision.mode == "Escape" then
-        if not isFiniteVector3(escapeDestination) then
-            return nil, "EscapeDestinationRequired"
-        end
+	if decision.mode == "Escape" then
+		if not isFiniteVector3(escapeDestination) then
+			return nil, "EscapeDestinationRequired"
+		end
 
-        return escapeDestination, "OK"
-    end
+		return escapeDestination, "OK"
+	end
 
-    if decision.mode ~= "Pursue" then
-        return nil, "UnsupportedBehaviorMode"
-    end
+	if decision.mode ~= "Pursue" then
+		return nil, "UnsupportedBehaviorMode"
+	end
 
-    local candidate = decision.priorityCandidate
+	local candidate = decision.priorityCandidate
 
-    if type(candidate) ~= "table"
-        or candidate.kind ~= self.Config.targetMode
-        or not isModel(candidate.model) then
-        return nil, "InvalidPriorityCandidate"
-    end
+	if type(candidate) ~= "table"
+		or candidate.kind ~= self.Config.targetMode
+		or not isModel(candidate.model) then
+		return nil, "InvalidPriorityCandidate"
+	end
 
-    local model = candidate.model
+	local model = candidate.model
 
-    local currentOk, current = pcall(function()
-        return model:IsDescendantOf(workspace)
-    end)
+	local currentOk, current = pcall(function()
+		return model:IsDescendantOf(workspace)
+	end)
 
-    if not currentOk or not current then
-        return nil, "PriorityCandidateUnavailable"
-    end
+	if not currentOk or not current then
+		return nil, "PriorityCandidateUnavailable"
+	end
 
-    local root = getModelRoot(model)
+	local root = getModelRoot(model)
 
-    if not root then
-        return nil, "PriorityCandidateRootUnavailable"
-    end
+	if not root then
+		return nil, "PriorityCandidateRootUnavailable"
+	end
 
-    local positionOk, position = pcall(function()
-        return root.Position
-    end)
+	local positionOk, position = pcall(function()
+		return root.Position
+	end)
 
-    if not positionOk or not isFiniteVector3(position) then
-        return nil, "PriorityCandidatePositionUnavailable"
-    end
+	if not positionOk or not isFiniteVector3(position) then
+		return nil, "PriorityCandidatePositionUnavailable"
+	end
 
-    return position, "OK"
+	return position, "OK"
 end
 
 function BehaviorRouteCoordinator:RequestRoute(
-    decision,
-    escapeDestination
+	decision,
+	escapeDestination
 )
-    if self._destroyed then
-        return false, nil, "Destroyed"
-    end
+	if self._destroyed then
+		return false, nil, "Destroyed"
+	end
 
-    if self.Config.enabled ~= true then
-        return false, nil, "NavigationDisabled"
-    end
+	if self.Config.enabled ~= true then
+		return false, nil, "NavigationDisabled"
+	end
 
-    if self.Config.pathfindingEnabled ~= true then
-        return false, nil, "PathfindingDisabled"
-    end
+	if self.Config.pathfindingEnabled ~= true then
+		return false, nil, "PathfindingDisabled"
+	end
 
-    if self._status == "Requesting"
-        or self._status == "Computing"
-        or self._status == "RouteReady"
-        or self._status == "Moving" then
-        return false, nil, "RouteAlreadyActive"
-    end
+	if self._status == "Requesting"
+		or self._status == "Computing"
+		or self._status == "RouteReady"
+		or self._status == "Moving" then
+		return false, nil, "RouteAlreadyActive"
+	end
 
-    if type(decision) ~= "table"
-        or decision.status ~= "ProposalReady"
-        or decision.requiresRouteEvaluation ~= true then
-        return false, nil, "DecisionNotRouteReady"
-    end
+	if type(decision) ~= "table"
+		or decision.status ~= "ProposalReady"
+		or decision.requiresRouteEvaluation ~= true then
+		return false, nil, "DecisionNotRouteReady"
+	end
 
-    if decision.mode ~= "Pursue"
-        and decision.mode ~= "Escape" then
-        return false, nil, "InvalidBehaviorMode"
-    end
+	if decision.mode ~= "Pursue"
+		and decision.mode ~= "Escape" then
+		return false, nil, "InvalidBehaviorMode"
+	end
 
-    if decision.targetMode ~= self.Config.targetMode then
-        return false, nil, "TargetModeMismatch"
-    end
+	if decision.targetMode ~= self.Config.targetMode then
+		return false, nil, "TargetModeMismatch"
+	end
 
-    if not isFiniteNumber(decision.timestamp) then
-        return false, nil, "InvalidDecisionTimestamp"
-    end
+	if not isFiniteNumber(decision.timestamp) then
+		return false, nil, "InvalidDecisionTimestamp"
+	end
 
-    local decisionAge = os.clock() - decision.timestamp
+	local decisionAge = os.clock() - decision.timestamp
 
-    if decisionAge < 0
-        or decisionAge > self._maxDecisionAge then
-        return false, nil, "DecisionStale"
-    end
+	if decisionAge < 0
+		or decisionAge > self._maxDecisionAge then
+		return false, nil, "DecisionStale"
+	end
 
-    local destination, destinationReason =
-        self:_resolveDestination(decision, escapeDestination)
+	local destination, destinationReason =
+		self:_resolveDestination(decision, escapeDestination)
 
-    if not destination then
-        return false, nil, destinationReason
-    end
+	if not destination then
+		return false, nil, destinationReason
+	end
 
-    local characterOk, character = pcall(function()
-        return self.CharacterManager:GetCharacter()
-    end)
+	local characterOk, character = pcall(function()
+		return self.CharacterManager:GetCharacter()
+	end)
 
-    if not characterOk or not isModel(character) then
-        return false, nil, "LocalCharacterUnavailable"
-    end
+	if not characterOk or not isModel(character) then
+		return false, nil, "LocalCharacterUnavailable"
+	end
 
-    local rootOk, root = pcall(function()
-        return self.CharacterManager:GetRoot(character)
-    end)
+	local rootOk, root = pcall(function()
+		return self.CharacterManager:GetRoot(character)
+	end)
 
-    if not rootOk or not root then
-        return false, nil, "LocalRootUnavailable"
-    end
+	if not rootOk or not root then
+		return false, nil, "LocalRootUnavailable"
+	end
 
-    local positionOk, startPosition = pcall(function()
-        return root.Position
-    end)
+	local positionOk, startPosition = pcall(function()
+		return root.Position
+	end)
 
-    if not positionOk or not isFiniteVector3(startPosition) then
-        return false, nil, "LocalPositionUnavailable"
-    end
+	if not positionOk or not isFiniteVector3(startPosition) then
+		return false, nil, "LocalPositionUnavailable"
+	end
 
-    self.WaypointTracker:Reset("NewRouteRequest")
+	self.WaypointTracker:Reset("NewRouteRequest")
 
-    self._mode = decision.mode
-    self._destination = destination
-    self._requestId = nil
-    self._cancelledDuringRequest = false
-    self._requesting = true
-    self._earlyPacket = nil
+	self._mode = decision.mode
+	self._destination = destination
+	self._requestId = nil
+	self._cancelledDuringRequest = false
+	self._requesting = true
+	self._earlyPacket = nil
 
-    -- Fix 1: Track internal requesting/submitting state
-    self._status = "Requesting"
-    self._reason = "SubmittingPathRequest"
+	-- Fix 1: Track internal requesting/submitting state
+	self._status = "Requesting"
+	self._reason = "SubmittingPathRequest"
 
-    local callOk, requestOk, requestId, requestReason = pcall(function()
-        return self.PathfindingEngine:RequestPath(
-            startPosition,
-            destination
-        )
-    end)
+	local callOk, requestOk, requestId, requestReason = pcall(function()
+		return self.PathfindingEngine:RequestPath(
+			startPosition,
+			destination
+		)
+	end)
 
-    self._requesting = false
+	self._requesting = false
 
-    -- Cancellation takes precedence over submission results.
-    if self._cancelledDuringRequest then
-        self._cancelledDuringRequest = false
-        self._earlyPacket = nil
-        self._requestId = nil
+	-- Cancellation takes precedence over submission results.
+	if self._cancelledDuringRequest then
+		self._cancelledDuringRequest = false
+		self._earlyPacket = nil
+		self._requestId = nil
 
-        return false, nil, "CancelledDuringSubmission"
-    end
+		return false, nil, "CancelledDuringSubmission"
+	end
 
-    if not callOk then
-        self._earlyPacket = nil
-        self._requestId = nil
+	if not callOk then
+		self._earlyPacket = nil
+		self._requestId = nil
 
-        local failureReason = "PathRequestError:" .. tostring(requestOk)
-        self:_emit("Rejected", failureReason)
+		local failureReason = "PathRequestError:" .. tostring(requestOk)
+		self:_emit("Rejected", failureReason)
 
-        return false, nil, failureReason
-    end
+		return false, nil, failureReason
+	end
 
-    if not requestOk then
-        self._earlyPacket = nil
-        self._requestId = nil
+	if not requestOk then
+		self._earlyPacket = nil
+		self._requestId = nil
 
-        self:_emit("Rejected", requestReason)
+		self:_emit("Rejected", requestReason)
 
-        return false, nil, requestReason
-    end
+		return false, nil, requestReason
+	end
 
-    if not isFiniteNumber(requestId) then
-        self._earlyPacket = nil
-        self._requestId = nil
+	if not isFiniteInteger(requestId) or requestId < 1 then
+		self._earlyPacket = nil
+		self._requestId = nil
 
-        self:_emit("Rejected", "InvalidPathRequestId")
+		self:_emit("Rejected", "InvalidPathRequestId")
 
-        return false, nil, "InvalidPathRequestId"
-    end
+		return false, nil, "InvalidPathRequestId"
+	end
 
-    self._requestId = requestId
+	if self._requestId ~= nil and self._requestId ~= requestId then
+		self._earlyPacket = nil
+		self._requestId = nil
 
-    -- Fix 2: Conditional emission once request ID is bound
-    if self._status == "Requesting" then
-        self:_emit("Computing", "PathRequestAccepted")
-    end
+		self:_emit("Rejected", "PathRequestIdMismatch")
 
-    local earlyPacket = self._earlyPacket
-    self._earlyPacket = nil
+		return false, nil, "PathRequestIdMismatch"
+	end
 
-    if earlyPacket
-        and earlyPacket.requestId == requestId then
-        self:AcceptPathResult(earlyPacket)
-    end
+	self._requestId = requestId
 
-    if self._requestId ~= requestId then
-        self._earlyPacket = nil
-        return false, nil, "CancelledDuringSubmission"
-    end
+	-- Fix 2: Conditional emission once request ID is bound
+	if self._status == "Requesting" then
+		self:_emit("Computing", "PathRequestAccepted")
+	end
 
-    return true, requestId, requestReason
+	local earlyPacket = self._earlyPacket
+	self._earlyPacket = nil
+
+	if earlyPacket
+		and earlyPacket.requestId == requestId then
+		self:AcceptPathResult(earlyPacket)
+	end
+
+	if self._requestId ~= requestId then
+		self._earlyPacket = nil
+		return false, nil, "CancelledDuringSubmission"
+	end
+
+	return true, requestId, requestReason
 end
 
 function BehaviorRouteCoordinator:_processPathResult(pathPacket)
-    if pathPacket.status == "Computing" then
-        return true, "Computing"
-    end
+	if pathPacket.status == "Computing" then
+		return true, "Computing"
+	end
 
-    if pathPacket.status ~= "Success" then
-        self:_emit(
-            "PathFailed",
-            pathPacket.status or "PathComputationFailed",
-            {
-                detail = pathPacket.detail,
-            }
-        )
+	if pathPacket.status ~= "Success" then
+		self:_emit(
+			"PathFailed",
+			pathPacket.status or "PathComputationFailed",
+			{
+				detail = pathPacket.detail,
+			}
+		)
 
-        return false, "PathComputationFailed"
-    end
+		return false, "PathComputationFailed"
+	end
 
-    local accepted, trackerReason =
-        self.WaypointTracker:SetPath(pathPacket)
+	local accepted, trackerReason =
+		self.WaypointTracker:SetPath(pathPacket)
 
-    if not accepted then
-        self:_emit("PathRejected", trackerReason)
-        return false, trackerReason
-    end
+	if not accepted then
+		self:_emit("PathRejected", trackerReason)
+		return false, trackerReason
+	end
 
-    if self.Config.movementEnabled ~= true then
-        self:_emit("RouteReady", "MovementDisabled")
-        return true, "RouteReady"
-    end
+	if self.Config.movementEnabled ~= true then
+		self:_emit("RouteReady", "MovementDisabled")
+		return true, "RouteReady"
+	end
 
-    if not self.MovementController then
-        self:_emit(
-            "RouteReady",
-            "MovementControllerUnavailable"
-        )
+	if not self.MovementController then
+		self:_emit(
+			"RouteReady",
+			"MovementControllerUnavailable"
+		)
 
-        return true, "RouteReady"
-    end
+		return true, "RouteReady"
+	end
 
-    local characterOk, character = pcall(function()
-        return self.CharacterManager:GetCharacter()
-    end)
+	local characterOk, character = pcall(function()
+		return self.CharacterManager:GetCharacter()
+	end)
 
-    if not characterOk or not character then
-        self:_emit(
-            "RouteReady",
-            "LocalCharacterUnavailable"
-        )
+	if not characterOk or not character then
+		self:_emit(
+			"RouteReady",
+			"LocalCharacterUnavailable"
+		)
 
-        return false, "LocalCharacterUnavailable"
-    end
+		return false, "LocalCharacterUnavailable"
+	end
 
-    local started, startReason =
-        self.MovementController:Start(character, pathPacket)
+	local started, startReason =
+		self.MovementController:Start(character, pathPacket)
 
-    if not started then
-        if self._status == "Computing" then
-            self:_emit(
-                "RouteReady",
-                "MovementStartRejected:" .. tostring(startReason)
-            )
-        end
+	if not started then
+		if self._status == "Computing" then
+			self:_emit(
+				"RouteReady",
+				"MovementStartRejected:" .. tostring(startReason)
+			)
+		end
 
-        return false, startReason
-    end
+		return false, startReason
+	end
 
-    -- Start() may synchronously emit Moving or a terminal status.
-    -- Only provide a fallback transition if no callback changed the state.
-    if self._status == "Computing" then
-        self:_emit("Moving", "MovementStarted")
-    end
+	-- Start() may synchronously emit Moving or a terminal status.
+	-- Only provide a fallback transition if no callback changed the state.
+	if self._status == "Computing" then
+		self:_emit("Moving", "MovementStarted")
+	end
 
-    return true, self._status
+	return true, self._status
 end
 
 function BehaviorRouteCoordinator:AcceptPathResult(pathPacket)
-    if self._destroyed then
-        return false, "Destroyed"
-    end
+	if self._destroyed then
+		return false, "Destroyed"
+	end
 
-    if type(pathPacket) ~= "table"
-        or not isFiniteNumber(pathPacket.requestId)
-        or type(pathPacket.status) ~= "string" then
-        return false, "InvalidPathPacket"
-    end
+	if type(pathPacket) ~= "table"
+		or not isFiniteInteger(pathPacket.requestId)
+		or pathPacket.requestId < 1
+		or type(pathPacket.status) ~= "string" then
+		return false, "InvalidPathPacket"
+	end
 
-    -- RequestPath publishes its initial Computing packet before
-    -- returning the request ID. Handle that synchronous callback.
-    if self._requesting and self._requestId == nil then
-        if pathPacket.status == "Computing" then
-            self._requestId = pathPacket.requestId
-            return true, "Computing"
-        end
+	-- RequestPath publishes its initial Computing packet before
+	-- returning the request ID. Handle that synchronous callback.
+	if self._requesting and self._requestId == nil then
+		if pathPacket.status == "Computing" then
+			self._requestId = pathPacket.requestId
+			return true, "Computing"
+		end
 
-        self._earlyPacket = pathPacket
-        return true, "Buffered"
-    end
+		self._earlyPacket = pathPacket
+		return true, "Buffered"
+	end
 
-    if pathPacket.requestId ~= self._requestId then
-        return false, "StalePathResult"
-    end
+	if pathPacket.requestId ~= self._requestId then
+		return false, "StalePathResult"
+	end
 
-    return self:_processPathResult(pathPacket)
+	return self:_processPathResult(pathPacket)
 end
 
 function BehaviorRouteCoordinator:UpdateProgress()
-    if self._destroyed then
-        return nil, "Destroyed"
-    end
+	if self._destroyed then
+		return nil, "Destroyed"
+	end
 
-    if self._status ~= "RouteReady"
-        and self._status ~= "Moving" then
-        return nil, "NoActiveRoute"
-    end
+	if self._status ~= "RouteReady"
+		and self._status ~= "Moving" then
+		return nil, "NoActiveRoute"
+	end
 
-    local characterOk, character = pcall(function()
-        return self.CharacterManager:GetCharacter()
-    end)
+	local characterOk, character = pcall(function()
+		return self.CharacterManager:GetCharacter()
+	end)
 
-    if not characterOk or not character then
-        return nil, "LocalCharacterUnavailable"
-    end
+	if not characterOk or not character then
+		return nil, "LocalCharacterUnavailable"
+	end
 
-    local rootOk, root = pcall(function()
-        return self.CharacterManager:GetRoot(character)
-    end)
+	local rootOk, root = pcall(function()
+		return self.CharacterManager:GetRoot(character)
+	end)
 
-    if not rootOk or not root then
-        return nil, "LocalRootUnavailable"
-    end
+	if not rootOk or not root then
+		return nil, "LocalRootUnavailable"
+	end
 
-    local positionOk, position = pcall(function()
-        return root.Position
-    end)
+	local positionOk, position = pcall(function()
+		return root.Position
+	end)
 
-    if not positionOk or not isFiniteVector3(position) then
-        return nil, "LocalPositionUnavailable"
-    end
+	if not positionOk or not isFiniteVector3(position) then
+		return nil, "LocalPositionUnavailable"
+	end
 
-    local progress, reason =
-        self.WaypointTracker:Update(position)
+	local progress, reason =
+		self.WaypointTracker:Update(position)
 
-    if not progress then
-        return nil, reason
-    end
+	if not progress then
+		return nil, reason
+	end
 
-    if progress.status == "Completed" then
-        self:_emit("Completed", "AllWaypointsReached", {
-            progress = progress.progress,
-        })
-    end
+	if progress.status == "Completed" then
+		self:_emit("Completed", "AllWaypointsReached", {
+			progress = progress.progress,
+		})
+	end
 
-    return progress, "OK"
+	return progress, "OK"
 end
 
 function BehaviorRouteCoordinator:Cancel(reason)
-    if self._destroyed then
-        return false, "Destroyed"
-    end
+	if self._destroyed then
+		return false, "Destroyed"
+	end
 
-    local movementActive = false
+	local movementActive = false
 
-    if self.MovementController then
-        local statusOk, movementStatus = pcall(function()
-            return self.MovementController:GetStatus()
-        end)
+	if self.MovementController then
+		local statusOk, movementStatus = pcall(function()
+			return self.MovementController:GetStatus()
+		end)
 
-        movementActive = statusOk
-            and type(movementStatus) == "table"
-            and movementStatus.status == "Moving"
-    end
+		movementActive = statusOk
+			and type(movementStatus) == "table"
+			and movementStatus.status == "Moving"
+	end
 
-    local routeActive = self._status == "Requesting"
-        or self._status == "Computing"
-        or self._status == "RouteReady"
-        or self._status == "Moving"
+	local routeActive = self._status == "Requesting"
+		or self._status == "Computing"
+		or self._status == "RouteReady"
+		or self._status == "Moving"
 
-    if not routeActive and not self._requesting and not movementActive then
-        return false, "NoActiveRoute"
-    end
+	if not routeActive and not self._requesting and not movementActive then
+		return false, "NoActiveRoute"
+	end
 
-    local cancelReason = reason or "RouteCancelled"
-    local cancelledRequestId = self._requestId
+	local cancelReason = reason or "RouteCancelled"
+	local cancelledRequestId = self._requestId
 
-    if self._requesting then
-        self._cancelledDuringRequest = true
-    end
+	if self._requesting then
+		self._cancelledDuringRequest = true
+	end
 
-    if self._status == "Computing" or self._requesting then
-        pcall(function()
-            self.PathfindingEngine:Cancel(cancelReason)
-        end)
-    end
+	if self._status == "Computing" or self._requesting then
+		pcall(function()
+			self.PathfindingEngine:Cancel(cancelReason)
+		end)
+	end
 
-    if movementActive or self._status == "Moving" then
-        if self.MovementController then
-            pcall(function()
-                self.MovementController:Stop(cancelReason)
-            end)
-        end
-    end
+	if movementActive or self._status == "Moving" then
+		if self.MovementController then
+			pcall(function()
+				self.MovementController:Stop(cancelReason)
+			end)
+		end
+	end
 
-    self.WaypointTracker:Reset(cancelReason)
+	self.WaypointTracker:Reset(cancelReason)
 
-    self._requestId = nil
-    self._destination = nil
-    self._mode = nil
-    self._earlyPacket = nil
+	self._requestId = nil
+	self._destination = nil
+	self._mode = nil
+	self._earlyPacket = nil
 
-    self:_emit("Cancelled", cancelReason, {
-        cancelledRequestId = cancelledRequestId,
-    })
+	self:_emit("Cancelled", cancelReason, {
+		cancelledRequestId = cancelledRequestId,
+	})
 
-    return true, "Cancelled"
+	return true, "Cancelled"
 end
 
 function BehaviorRouteCoordinator:Reset(reason)
-    if self._destroyed then
-        return false, "Destroyed"
-    end
+	if self._destroyed then
+		return false, "Destroyed"
+	end
 
-    local resetReason = reason or "Reset"
-    local cancelled, cancelReason = self:Cancel(resetReason)
+	local resetReason = reason or "Reset"
+	local cancelled, cancelReason = self:Cancel(resetReason)
 
-    if not cancelled and cancelReason ~= "NoActiveRoute" then
-        return false, cancelReason
-    end
+	if not cancelled and cancelReason ~= "NoActiveRoute" then
+		return false, cancelReason
+	end
 
-    local trackerOk, trackerReason = self.WaypointTracker:Reset(resetReason)
+	local trackerOk, trackerReason = self.WaypointTracker:Reset(resetReason)
 
-    if not trackerOk then
-        return false, trackerReason
-    end
+	if not trackerOk then
+		return false, trackerReason
+	end
 
-    self._requestId = nil
-    self._destination = nil
-    self._mode = nil
-    self._earlyPacket = nil
-    self._status = "Idle"
-    self._reason = resetReason
+	self._requestId = nil
+	self._destination = nil
+	self._mode = nil
+	self._earlyPacket = nil
+	self._status = "Idle"
+	self._reason = resetReason
 
-    self:_emit("Idle", resetReason)
+	self:_emit("Idle", resetReason)
 
-    return true, "Reset"
+	return true, "Reset"
 end
 
 function BehaviorRouteCoordinator:Destroy()
-    if self._destroyed then
-        return
-    end
+	if self._destroyed then
+		return
+	end
 
-    self:Reset("CoordinatorDestroyed")
+	self:Reset("CoordinatorDestroyed")
 
-    if self.MovementController then
-        pcall(function()
-            self.MovementController:SetOnStatus(
-                self._previousMovementStatusCallback
-            )
-        end)
-    end
+	if self.MovementController then
+		pcall(function()
+			self.MovementController:SetOnStatus(
+				self._previousMovementStatusCallback
+			)
+		end)
+	end
 
-    self.PathfindingEngine = nil
-    self.WaypointTracker = nil
-    self.CharacterManager = nil
-    self.MovementController = nil
-    self._onStatus = nil
-    self._previousMovementStatusCallback = nil
-    self._movementStatusCallback = nil
-    self._destroyed = true
+	self.PathfindingEngine = nil
+	self.WaypointTracker = nil
+	self.CharacterManager = nil
+	self.MovementController = nil
+	self._onStatus = nil
+	self._previousMovementStatusCallback = nil
+	self._movementStatusCallback = nil
+	self._destroyed = true
 end
 
 return BehaviorRouteCoordinator
