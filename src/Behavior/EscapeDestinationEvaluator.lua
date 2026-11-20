@@ -291,6 +291,8 @@ function EscapeDestinationEvaluator:Evaluate(decision, candidates)
         return nil, "Destroyed"
     end
 
+    self._latest = nil
+
     if self.Config.enabled ~= true then
         return nil, "NavigationDisabled"
     end
