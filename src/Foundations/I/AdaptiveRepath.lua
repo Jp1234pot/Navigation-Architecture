@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Module: AdaptiveRepath
 -- Foundation I: event-driven repath eligibility with strict cooldown and budget limits.
@@ -246,6 +245,9 @@ function AdaptiveRepath:ReportOutcome(success, reason, recordKind)
         return false, "InvalidRecordKind"
     end
 
+    local now = os.clock()
+    self:_expireCircuit(now)
+
     if success then
         -- A success cannot cancel an active circuit-breaker period.
         if self._circuitOpenUntil and os.clock() < self._circuitOpenUntil then
@@ -266,7 +268,7 @@ function AdaptiveRepath:ReportOutcome(success, reason, recordKind)
     if self._consecutiveFailures >= self.Config.adaptiveRepathCircuitBreakAfter
         and not self._circuitOpenUntil then
 
-        self._circuitOpenUntil = os.clock() + self.Config.adaptiveRepathCircuitBreakSeconds
+        self._circuitOpenUntil = now + self.Config.adaptiveRepathCircuitBreakSeconds
 
         self:_record(
             "CircuitBreaker",
