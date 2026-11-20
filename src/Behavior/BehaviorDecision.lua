@@ -1,5 +1,3 @@
-
-
 -- Navigation Architecture v2.2
 -- Module: BehaviorDecision
 -- Behavior layer: interprets eligible multi-contact analysis.
@@ -21,450 +19,500 @@ local BehaviorDecision = {}
 BehaviorDecision.__index = BehaviorDecision
 
 local VALID_MODES = {
-    Pursue = true,
-    Escape = true,
+	Pursue = true,
+	Escape = true,
 }
 
 local VALID_ASSESSMENTS = {
-    CriticalProximity = true,
-    PredictedCriticalPass = true,
-    ElevatedProximity = true,
-    PredictedNearPass = true,
-    Approaching = true,
-    Distant = true,
+	CriticalProximity = true,
+	PredictedCriticalPass = true,
+	ElevatedProximity = true,
+	PredictedNearPass = true,
+	Approaching = true,
+	Distant = true,
 }
 
 local function isFiniteNumber(value)
-    return type(value) == "number"
-        and value == value
-        and value ~= math.huge
-        and value ~= -math.huge
+	return type(value) == "number"
+		and value == value
+		and value ~= math.huge
+		and value ~= -math.huge
+end
+
+local function isFiniteInteger(value)
+	return isFiniteNumber(value) and value % 1 == 0
+end
+
+-- Rejects sparse arrays, invalid keys, and entries beyond the limit.
+local function getDenseArrayLength(array, maximum)
+	if type(array) ~= "table" then
+		return nil
+	end
+
+	local count = 0
+	local highestIndex = 0
+	local key = nil
+
+	while true do
+		local nextKey = next(array, key)
+
+		if nextKey == nil then
+			break
+		end
+
+		key = nextKey
+
+		if not isFiniteInteger(key)
+			or key < 1
+			or key > maximum then
+			return nil
+		end
+
+		count += 1
+		highestIndex = math.max(highestIndex, key)
+	end
+
+	if count ~= highestIndex then
+		return nil
+	end
+
+	return count
 end
 
 local function isModel(value)
-    if typeof(value) ~= "Instance" then
-        return false
-    end
+	if typeof(value) ~= "Instance" then
+		return false
+	end
 
-    local ok, result = pcall(function()
-        return value:IsA("Model")
-    end)
+	local ok, result = pcall(function()
+		return value:IsA("Model")
+	end)
 
-    return ok and result == true
+	return ok and result == true
 end
 
 local function copyContact(contact)
-    return {
-        model = contact.model,
-        player = contact.player,
-        kind = contact.kind,
-        classification = contact.classification,
-        distance = contact.distance,
-        closingSpeed = contact.closingSpeed,
-        timeToClosestApproach = contact.timeToClosestApproach,
-        predictedClosestDistance = contact.predictedClosestDistance,
-        velocityAvailable = contact.velocityAvailable,
-        score = contact.score,
-        assessment = contact.assessment,
-        sampleTimestamp = contact.sampleTimestamp,
-    }
+	return {
+		model = contact.model,
+		player = contact.player,
+		kind = contact.kind,
+		classification = contact.classification,
+		distance = contact.distance,
+		closingSpeed = contact.closingSpeed,
+		timeToClosestApproach = contact.timeToClosestApproach,
+		predictedClosestDistance = contact.predictedClosestDistance,
+		velocityAvailable = contact.velocityAvailable,
+		score = contact.score,
+		assessment = contact.assessment,
+		sampleTimestamp = contact.sampleTimestamp,
+	}
 end
 
 local function copyDecision(decision)
-    if not decision then
-        return nil
-    end
+	if not decision then
+		return nil
+	end
 
-    local result = {
-        status = decision.status,
-        reason = decision.reason,
-        mode = decision.mode,
-        timestamp = decision.timestamp,
-        analysisTimestamp = decision.analysisTimestamp,
-        targetMode = decision.targetMode,
-        partialAnalysis = decision.partialAnalysis,
-        inspectedCount = decision.inspectedCount,
-        uninspectedCount = decision.uninspectedCount,
-        rejectedCount = decision.rejectedCount,
-        requiresRouteEvaluation = decision.requiresRouteEvaluation,
-        priorityCandidate = nil,
-        contacts = {},
-    }
+	local result = {
+		status = decision.status,
+		reason = decision.reason,
+		mode = decision.mode,
+		timestamp = decision.timestamp,
+		analysisTimestamp = decision.analysisTimestamp,
+		targetMode = decision.targetMode,
+		partialAnalysis = decision.partialAnalysis,
+		inspectedCount = decision.inspectedCount,
+		uninspectedCount = decision.uninspectedCount,
+		rejectedCount = decision.rejectedCount,
+		omittedResultCount = decision.omittedResultCount,
+		requiresRouteEvaluation = decision.requiresRouteEvaluation,
+		priorityCandidate = nil,
+		contacts = {},
+	}
 
-    if decision.priorityCandidate then
-        result.priorityCandidate = copyContact(
-            decision.priorityCandidate
-        )
-    end
+	if decision.priorityCandidate then
+		result.priorityCandidate = copyContact(
+			decision.priorityCandidate
+		)
+	end
 
-    for index, contact in ipairs(decision.contacts) do
-        result.contacts[index] = copyContact(contact)
-    end
+	for index, contact in ipairs(decision.contacts) do
+		result.contacts[index] = copyContact(contact)
+	end
 
-    return result
+	return result
 end
 
 local function validateContact(contact, expectedMode)
-    if type(contact) ~= "table" then
-        return false
-    end
+	if type(contact) ~= "table" then
+		return false
+	end
 
-    if not isModel(contact.model) then
-        return false
-    end
+	if not isModel(contact.model) then
+		return false
+	end
 
-    if not contact.model:IsDescendantOf(workspace) then
-        return false
-    end
+	if not contact.model:IsDescendantOf(workspace) then
+		return false
+	end
 
-    if contact.kind ~= expectedMode then
-        return false
-    end
+	if contact.kind ~= expectedMode then
+		return false
+	end
 
-    if not isFiniteNumber(contact.distance)
-        or contact.distance < 0 then
-        return false
-    end
+	if not isFiniteNumber(contact.distance)
+		or contact.distance < 0 then
+		return false
+	end
 
-    if not isFiniteNumber(contact.score)
-        or contact.score < 0
-        or contact.score > 100 then
-        return false
-    end
+	if not isFiniteNumber(contact.score)
+		or contact.score < 0
+		or contact.score > 100 then
+		return false
+	end
 
-    if not VALID_ASSESSMENTS[contact.assessment] then
-        return false
-    end
+	if not VALID_ASSESSMENTS[contact.assessment] then
+		return false
+	end
 
-    if contact.closingSpeed ~= nil
-        and not isFiniteNumber(contact.closingSpeed) then
-        return false
-    end
+	if contact.closingSpeed ~= nil
+		and not isFiniteNumber(contact.closingSpeed) then
+		return false
+	end
 
-    if contact.predictedClosestDistance ~= nil
-        and (
-            not isFiniteNumber(contact.predictedClosestDistance)
-            or contact.predictedClosestDistance < 0
-        ) then
-        return false
-    end
+	if contact.predictedClosestDistance ~= nil
+		and (
+			not isFiniteNumber(contact.predictedClosestDistance)
+			or contact.predictedClosestDistance < 0
+		) then
+		return false
+	end
 
-    if contact.timeToClosestApproach ~= nil
-        and (
-            not isFiniteNumber(contact.timeToClosestApproach)
-            or contact.timeToClosestApproach < 0
-        ) then
-        return false
-    end
+	if contact.timeToClosestApproach ~= nil
+		and (
+			not isFiniteNumber(contact.timeToClosestApproach)
+			or contact.timeToClosestApproach < 0
+		) then
+		return false
+	end
 
-    return true
+	return true
 end
 
 local function sortContacts(contacts)
-    table.sort(contacts, function(left, right)
-        if left.score ~= right.score then
-            return left.score > right.score
-        end
+	table.sort(contacts, function(left, right)
+		if left.score ~= right.score then
+			return left.score > right.score
+		end
 
-        if left.distance ~= right.distance then
-            return left.distance < right.distance
-        end
+		if left.distance ~= right.distance then
+			return left.distance < right.distance
+		end
 
-        local leftPredicted =
-            left.predictedClosestDistance or math.huge
+		local leftPredicted =
+			left.predictedClosestDistance or math.huge
 
-        local rightPredicted =
-            right.predictedClosestDistance or math.huge
+		local rightPredicted =
+			right.predictedClosestDistance or math.huge
 
-        return leftPredicted < rightPredicted
-    end)
+		return leftPredicted < rightPredicted
+	end)
 end
 
 function BehaviorDecision.new(config, options)
-    assert(
-        type(config) == "table",
-        "BehaviorDecision requires validated config"
-    )
+	assert(
+		type(config) == "table",
+		"BehaviorDecision requires validated config"
+	)
 
-    assert(
-        VALID_MODES[config.behaviorMode],
-        "Invalid behaviorMode"
-    )
+	assert(
+		VALID_MODES[config.behaviorMode],
+		"Invalid behaviorMode"
+	)
 
-    assert(
-        config.targetMode == "Player"
-            or config.targetMode == "NPC",
-        "Invalid targetMode"
-    )
+	assert(
+		config.targetMode == "Player"
+			or config.targetMode == "NPC",
+		"Invalid targetMode"
+	)
 
-    options = options or {}
+	options = options or {}
 
-    assert(
-        type(options) == "table",
-        "BehaviorDecision options must be a table"
-    )
+	assert(
+		type(options) == "table",
+		"BehaviorDecision options must be a table"
+	)
 
-    local maxAnalysisAge =
-        options.maxAnalysisAge
-        or config.threatMaxEstimateAge
-        or 0.75
+	local maxAnalysisAge =
+		options.maxAnalysisAge
+		or config.threatMaxEstimateAge
+		or 0.75
 
-    local maxContacts =
-        options.maxContacts
-        or config.maxThreatResults
-        or 16
+	local maxContacts =
+		options.maxContacts
+		or config.maxThreatResults
+		or 16
 
-    assert(
-        isFiniteNumber(maxAnalysisAge)
-            and maxAnalysisAge > 0,
-        "maxAnalysisAge must be positive"
-    )
+	assert(
+		isFiniteNumber(maxAnalysisAge)
+			and maxAnalysisAge > 0,
+		"maxAnalysisAge must be positive"
+	)
 
-    assert(
-        isFiniteNumber(maxContacts)
-            and maxContacts % 1 == 0
-            and maxContacts >= 1
-            and maxContacts <= 64,
-        "maxContacts must be an integer from 1 to 64"
-    )
+	assert(
+		isFiniteNumber(maxContacts)
+			and maxContacts % 1 == 0
+			and maxContacts >= 1
+			and maxContacts <= 64,
+		"maxContacts must be an integer from 1 to 64"
+	)
 
-    return setmetatable({
-        Config = config,
+	return setmetatable({
+		Config = config,
 
-        _mode = config.behaviorMode,
-        _targetMode = config.targetMode,
+		_mode = config.behaviorMode,
+		_targetMode = config.targetMode,
 
-        _maxAnalysisAge = maxAnalysisAge,
-        _maxContacts = maxContacts,
+		_maxAnalysisAge = maxAnalysisAge,
+		_maxContacts = maxContacts,
 
-        _latest = nil,
-        _destroyed = false,
-    }, BehaviorDecision)
+		_latest = nil,
+		_destroyed = false,
+	}, BehaviorDecision)
 end
 
 function BehaviorDecision:SetMode(mode)
-    if self._destroyed then
-        return false, "Destroyed"
-    end
+	if self._destroyed then
+		return false, "Destroyed"
+	end
 
-    if not VALID_MODES[mode] then
-        return false, "InvalidBehaviorMode"
-    end
+	if not VALID_MODES[mode] then
+		return false, "InvalidBehaviorMode"
+	end
 
-    self._mode = mode
-    self._latest = nil
+	self._mode = mode
+	self._latest = nil
 
-    return true, "ModeUpdated"
+	return true, "ModeUpdated"
 end
 
 function BehaviorDecision:GetMode()
-    if self._destroyed then
-        return nil, "Destroyed"
-    end
+	if self._destroyed then
+		return nil, "Destroyed"
+	end
 
-    return self._mode, "OK"
+	return self._mode, "OK"
 end
 
 function BehaviorDecision:_makeUnavailable(reason, packet)
-    local decision = {
-        status = "Waiting",
-        reason = reason,
-        mode = self._mode,
-        timestamp = os.clock(),
-        analysisTimestamp =
-            type(packet) == "table" and packet.timestamp or nil,
-        targetMode = self._targetMode,
-        partialAnalysis = true,
-        inspectedCount = 0,
-        uninspectedCount = 0,
-        rejectedCount = 0,
-        requiresRouteEvaluation = false,
-        priorityCandidate = nil,
-        contacts = {},
-    }
+	local decision = {
+		status = "Waiting",
+		reason = reason,
+		mode = self._mode,
+		timestamp = os.clock(),
+		analysisTimestamp =
+			type(packet) == "table" and packet.timestamp or nil,
+		targetMode = self._targetMode,
+		partialAnalysis = true,
+		inspectedCount = 0,
+		uninspectedCount = 0,
+		rejectedCount = 0,
+		requiresRouteEvaluation = false,
+		priorityCandidate = nil,
+		contacts = {},
+	}
 
-    self._latest = decision
+	self._latest = decision
 
-    return copyDecision(decision), reason
+	return copyDecision(decision), reason
 end
 
 function BehaviorDecision:Evaluate(packet)
-    if self._destroyed then
-        return nil, "Destroyed"
-    end
+	if self._destroyed then
+		return nil, "Destroyed"
+	end
 
-    if self.Config.enabled ~= true then
-        return self:_makeUnavailable(
-            "NavigationDisabled",
-            packet
-        )
-    end
+	if self.Config.enabled ~= true then
+		return self:_makeUnavailable(
+			"NavigationDisabled",
+			packet
+		)
+	end
 
-    if self.Config.multiThreatAnalysisEnabled ~= true then
-        return self:_makeUnavailable(
-            "ThreatAnalysisDisabled",
-            packet
-        )
-    end
+	if self.Config.multiThreatAnalysisEnabled ~= true then
+		return self:_makeUnavailable(
+			"ThreatAnalysisDisabled",
+			packet
+		)
+	end
 
-    if type(packet) ~= "table" then
-        return self:_makeUnavailable(
-            "AnalysisPacketUnavailable",
-            nil
-        )
-    end
+	if type(packet) ~= "table" then
+		return self:_makeUnavailable(
+			"AnalysisPacketUnavailable",
+			nil
+		)
+	end
 
-    if packet.targetMode ~= self._targetMode then
-        return self:_makeUnavailable(
-            "TargetModeMismatch",
-            packet
-        )
-    end
+	if packet.targetMode ~= self._targetMode then
+		return self:_makeUnavailable(
+			"TargetModeMismatch",
+			packet
+		)
+	end
 
-    if not isFiniteNumber(packet.timestamp) then
-        return self:_makeUnavailable(
-            "InvalidAnalysisTimestamp",
-            packet
-        )
-    end
+	if not isFiniteNumber(packet.timestamp) then
+		return self:_makeUnavailable(
+			"InvalidAnalysisTimestamp",
+			packet
+		)
+	end
 
-    local now = os.clock()
-    local analysisAge = now - packet.timestamp
+	local now = os.clock()
+	local analysisAge = now - packet.timestamp
 
-    if analysisAge < 0
-        or analysisAge > self._maxAnalysisAge then
-        return self:_makeUnavailable(
-            "AnalysisStale",
-            packet
-        )
-    end
+	if analysisAge < 0
+		or analysisAge > self._maxAnalysisAge then
+		return self:_makeUnavailable(
+			"AnalysisStale",
+			packet
+		)
+	end
 
-    if type(packet.results) ~= "table" then
-        return self:_makeUnavailable(
-            "InvalidAnalysisResults",
-            packet
-        )
-    end
+	local resultCount = getDenseArrayLength(packet.results, 64)
 
-    local contacts = {}
-    local rejectedCount = 0
+	if resultCount == nil then
+		return self:_makeUnavailable(
+			"InvalidAnalysisResults",
+			packet
+		)
+	end
 
-    for index = 1, math.min(#packet.results, self._maxContacts) do
-        local contact = packet.results[index]
+	local contacts = {}
+	local rejectedCount = 0
 
-        if validateContact(contact, self._targetMode) then
-            contacts[#contacts + 1] = copyContact(contact)
-        else
-            rejectedCount += 1
-        end
-    end
+	local omittedResultCount = math.max(
+		0,
+		resultCount - self._maxContacts
+	)
 
-    sortContacts(contacts)
+	for index = 1, math.min(resultCount, self._maxContacts) do
+		local contact = packet.results[index]
 
-    local inspectedCount =
-        packet.inspectedSourceEntries or 0
+		if validateContact(contact, self._targetMode) then
+			contacts[#contacts + 1] = copyContact(contact)
+		else
+			rejectedCount += 1
+		end
+	end
 
-    local uninspectedCount =
-        packet.uninspectedSourceEntries or 0
+	sortContacts(contacts)
 
-    local sourceRejectedCount =
-        packet.rejectedCount or 0
+	local inspectedCount =
+		packet.inspectedSourceEntries or 0
 
-    if not isFiniteNumber(inspectedCount)
-        or inspectedCount < 0
-        or not isFiniteNumber(uninspectedCount)
-        or uninspectedCount < 0
-        or not isFiniteNumber(sourceRejectedCount)
-        or sourceRejectedCount < 0 then
-        return self:_makeUnavailable(
-            "InvalidAnalysisCoverage",
-            packet
-        )
-    end
+	local uninspectedCount =
+		packet.uninspectedSourceEntries or 0
 
-    local partialAnalysis =
-        uninspectedCount > 0
-        or sourceRejectedCount > 0
-        or rejectedCount > 0
+	local sourceRejectedCount =
+		packet.rejectedCount or 0
 
-    local priorityCandidate = contacts[1]
+	if not isFiniteInteger(inspectedCount)
+		or inspectedCount < 0
+		or not isFiniteInteger(uninspectedCount)
+		or uninspectedCount < 0
+		or not isFiniteInteger(sourceRejectedCount)
+		or sourceRejectedCount < 0 then
+		return self:_makeUnavailable(
+			"InvalidAnalysisCoverage",
+			packet
+		)
+	end
 
-    local status
-    local reason
+	local partialAnalysis =
+		uninspectedCount > 0
+		or sourceRejectedCount > 0
+		or rejectedCount > 0
+		or omittedResultCount > 0
 
-    if not priorityCandidate then
-        status = "NoObservedContacts"
-        reason = partialAnalysis
-            and "NoValidContactsInPartialAnalysis"
-            or "NoValidContactsInAnalysis"
-    else
-        status = "ProposalReady"
+	local priorityCandidate = contacts[1]
 
-        if self._mode == "Pursue" then
-            reason = "PriorityEligibleCandidateIdentified"
-        else
-            reason = "PriorityContactAndThreatSetIdentified"
-        end
-    end
+	local status
+	local reason
 
-    local decision = {
-        status = status,
-        reason = reason,
+	if not priorityCandidate then
+		status = "NoObservedContacts"
+		reason = partialAnalysis
+			and "NoValidContactsInPartialAnalysis"
+			or "NoValidContactsInAnalysis"
+	else
+		status = "ProposalReady"
 
-        mode = self._mode,
-        timestamp = now,
-        analysisTimestamp = packet.timestamp,
-        targetMode = self._targetMode,
+		if self._mode == "Pursue" then
+			reason = "PriorityEligibleCandidateIdentified"
+		else
+			reason = "PriorityContactAndThreatSetIdentified"
+		end
+	end
 
-        partialAnalysis = partialAnalysis,
-        inspectedCount = inspectedCount,
-        uninspectedCount = uninspectedCount,
-        rejectedCount = rejectedCount + sourceRejectedCount,
+	local decision = {
+		status = status,
+		reason = reason,
 
-        -- A route evaluator must still assess reachability,
-        -- obstacles, movement feasibility, and current conditions.
-        requiresRouteEvaluation =
-            priorityCandidate ~= nil,
+		mode = self._mode,
+		timestamp = now,
+		analysisTimestamp = packet.timestamp,
+		targetMode = self._targetMode,
 
-        priorityCandidate = priorityCandidate,
-        contacts = contacts,
-    }
+		partialAnalysis = partialAnalysis,
+		inspectedCount = inspectedCount,
+		uninspectedCount = uninspectedCount,
+		rejectedCount = rejectedCount + sourceRejectedCount,
+		omittedResultCount = omittedResultCount,
 
-    self._latest = decision
+		-- A route evaluator must still assess reachability,
+		-- obstacles, movement feasibility, and current conditions.
+		requiresRouteEvaluation =
+			priorityCandidate ~= nil,
 
-    return copyDecision(decision), "OK"
+		priorityCandidate = priorityCandidate,
+		contacts = contacts,
+	}
+
+	self._latest = decision
+
+	return copyDecision(decision), "OK"
 end
 
 function BehaviorDecision:GetLatest()
-    if self._destroyed then
-        return nil, "Destroyed"
-    end
+	if self._destroyed then
+		return nil, "Destroyed"
+	end
 
-    if not self._latest then
-        return nil, "NoDecisionAvailable"
-    end
+	if not self._latest then
+		return nil, "NoDecisionAvailable"
+	end
 
-    return copyDecision(self._latest), "OK"
+	return copyDecision(self._latest), "OK"
 end
 
 function BehaviorDecision:Reset()
-    if self._destroyed then
-        return false, "Destroyed"
-    end
+	if self._destroyed then
+		return false, "Destroyed"
+	end
 
-    self._latest = nil
+	self._latest = nil
 
-    return true, "Reset"
+	return true, "Reset"
 end
 
 function BehaviorDecision:Destroy()
-    if self._destroyed then
-        return
-    end
+	if self._destroyed then
+		return
+	end
 
-    self._latest = nil
-    self.Config = nil
-    self._destroyed = true
+	self._latest = nil
+	self.Config = nil
+	self._destroyed = true
 end
 
 return BehaviorDecision
