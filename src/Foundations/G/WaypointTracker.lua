@@ -1,4 +1,3 @@
-
 -- Navigation Architecture v2.2
 -- Module: WaypointTracker
 -- Foundation G: bounded, still read-only waypoint progress tracking.
@@ -105,6 +104,14 @@ function WaypointTracker:SetPath(pathPacket)
         return false, "PathNotSuccessful"
     end
 
+    local requestId = pathPacket.requestId
+
+    if not isFiniteNumber(requestId)
+        or requestId % 1 ~= 0
+        or requestId < 1 then
+        return false, "InvalidRequestId"
+    end
+
     if type(pathPacket.waypoints) ~= "table" then
         return false, "InvalidWaypoints"
     end
@@ -148,8 +155,11 @@ function WaypointTracker:SetPath(pathPacket)
             return false, "InvalidWaypointLabel"
         end
 
-        if waypoint.action ~= nil and typeof(waypoint.action) ~= "EnumItem" then
-            return false, "InvalidWaypointAction"
+        if waypoint.action ~= nil then
+            if typeof(waypoint.action) ~= "EnumItem"
+                or waypoint.action.EnumType ~= Enum.PathWaypointAction then
+                return false, "InvalidWaypointAction"
+            end
         end
 
         copied[index] = {
