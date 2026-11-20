@@ -131,7 +131,6 @@ local function validateDependencies(dependencies)
 			"RequestPath",
 			"Cancel",
 			"SetOnResult",
-			"GetOnResult",
 		}),
 		"A compatible PathfindingEngine is required"
 	)
@@ -182,18 +181,13 @@ function BehaviorComposition.new(
 	assert(type(options) == "table",
 		"BehaviorComposition options must be a table")
 
-	local callbackReadOk, previousCallback, callbackReadReason = pcall(function()
-		return dependencies.pathfindingEngine:GetOnResult()
-	end)
+	local previousCallback =
+		options.previousPathResultCallback
 
 	assert(
-		callbackReadOk
-			and callbackReadReason == "OK"
-			and (
-				previousCallback == nil
-				or type(previousCallback) == "function"
-			),
-		"Could not inspect the existing PathfindingEngine callback"
+		previousCallback == nil
+			or type(previousCallback) == "function",
+		"previousPathResultCallback must be a function or nil"
 	)
 
 	local owned = {}
@@ -325,13 +319,31 @@ function BehaviorComposition.new(
 			return
 		end
 
-		self.BehaviorCoordinator:AcceptPathResult(packet)
+		-- Isolate BehaviorCoordinator failure from the previous callback.
+		local behaviorOk, behaviorError = pcall(function()
+			self.BehaviorCoordinator:AcceptPathResult(packet)
+		end)
 
+		if not behaviorOk then
+			warn(
+				"[Navigation v2.2] Behavior path-result callback failed: "
+					.. tostring(behaviorError)
+			)
+		end
+
+		-- The previous owner must still receive the packet independently.
 		if self._previousPathResultCallback then
-			pcall(
+			local previousOk, previousError = pcall(
 				self._previousPathResultCallback,
 				packet
 			)
+
+			if not previousOk then
+				warn(
+					"[Navigation v2.2] Previous path-result callback failed: "
+						.. tostring(previousError)
+				)
+			end
 		end
 	end
 
@@ -507,20 +519,13 @@ function BehaviorComposition:Destroy()
 
 	self._destroyed = true
 
-	-- Restore only while this composition still owns the callback slot.
-	-- Do not overwrite a callback installed by another owner afterward.
+	-- Restore the callback that existed before composition took ownership.
 	if self.PathfindingEngine then
-		local readOk, currentCallback = pcall(function()
-			return self.PathfindingEngine:GetOnResult()
+		pcall(function()
+			self.PathfindingEngine:SetOnResult(
+				self._previousPathResultCallback
+			)
 		end)
-
-		if readOk and currentCallback == self._pathResultCallback then
-			pcall(function()
-				self.PathfindingEngine:SetOnResult(
-					self._previousPathResultCallback
-				)
-			end)
-		end
 	end
 
 	-- Reverse construction order:
