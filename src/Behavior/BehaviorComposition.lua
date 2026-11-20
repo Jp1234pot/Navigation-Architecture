@@ -548,36 +548,3 @@ function BehaviorComposition:Destroy()
 		if readOk
 			and readReason == "OK"
 			and currentCallback == self._pathResultCallback then
-
-			pcall(function()
-				self.PathfindingEngine:SetOnResult(
-					self._previousPathResultCallback
-				)
-			end)
-		end
-	end
-
-	-- Reverse construction order:
-	-- coordinators first, then their owned dependencies.
-	destroyOwned(self._owned)
-
-	self.Config = nil
-
-	self.ArenaAnalysisPipeline = nil
-	self.ArenaEscapeCandidateAdapter = nil
-
-	self.LocalRecordProvider = nil
-	self.MultiThreatAnalysis = nil
-	self.BehaviorDecision = nil
-	self.EscapeDestinationEvaluator = nil
-	self.BehaviorRouteCoordinator = nil
-	self.BehaviorCoordinator = nil
-
-	self.PathfindingEngine = nil
-
-	self._previousPathResultCallback = nil
-	self._pathResultCallback = nil
-	self._stores = nil
-end
-
-return BehaviorComposition
